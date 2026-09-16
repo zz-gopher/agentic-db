@@ -1,9 +1,9 @@
 from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_community.embeddings import FakeEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 class FewShotRepository:
     def __init__(self):
-        self.embeddings = FakeEmbeddings(size=384)
+        self.embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-zh-v1.5")
         self.vector_store = InMemoryVectorStore(self.embeddings)
         self._init_data()
 

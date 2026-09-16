@@ -1,16 +1,15 @@
 import os
-
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-import httpx
-
-load_dotenv()
-
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["LANGCHAIN_OPENAI_TCP_KEEPALIVE"] = "0"
 os.environ["HTTP_PROXY"] = ""
 os.environ["HTTPS_PROXY"] = ""
 os.environ["ALL_PROXY"] = ""
 os.environ["NO_PROXY"] = "*"
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+import httpx
+
+load_dotenv()
 
 direct_client = httpx.Client(trust_env=False)
 # 获取环境变量中的 Key
