@@ -1,0 +1,21 @@
+# === Python 核心忽略 ===
+__pycache__/
+*.py[cod]
+*$py.class
+
+# === 虚拟环境 (绝对不能上传) ===
+.venv/
+venv/
+env/
+
+# === 环境变量与敏感配置 (绝对不能上传) ===
+.env
+*.pem
+
+# === IDE 配置 ===
+.idea/
+.vscode/
+
+# === 以后 Java 端预留的忽略 ===
+target/
+*.class
