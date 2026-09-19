@@ -37,4 +37,4 @@ if __name__ == "__main__":
         draft = final_state.get("final_draft")
         if draft:
             print(f"\n✅ 优化成功 (打分: {final_state.get('review_score')}):")
-            print(draft.optimizedSql)
+            print(draft.optimized_sql)

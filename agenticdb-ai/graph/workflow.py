@@ -1,10 +1,10 @@
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
-
+from langchain_core.documents import Document
 from core.config import llm
 from retrievers.vector_repo import vector_store
-from schemas.models import SqlOptimizationDraft, EvaluationResult
+from schemas.models import SqlOptimizationDraft, EvaluationResult, ExperienceTagging
 from tools.db_tools import get_table_schema
 from langchain_core.prompts import ChatPromptTemplate
 from graph.state import AgenticState
@@ -133,6 +133,49 @@ def retriever_node(state: AgenticState):
     # 3. 返回更新的增量状态
     return {"examples": examples_str}
 
+
+def memory_node(state: AgenticState) -> dict:
+    bad_sql = state.get("bad_sql", "")
+    draft = state.get("final_draft")
+    db_engine = state.get("db_engine", "mysql")
+
+    # 如果没有最终草案，说明出了异常，直接跳过
+    if not draft:
+        return {}
+
+    # 1. 召唤“标签提取员”，强制输出 JSON 标签
+    tagging_chain = llm.with_structured_output(ExperienceTagging, method="function_calling")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """你是一个数据库经验总结专家。
+            请对比用户输入的烂SQL和最终的优化草案，提取出最通用的【病理特征】和【错误标签】。
+            注意：诊断说明必须具有泛化性，不要包含具体的业务表名。"""),
+            ("user", "原SQL: {bad_sql}\n优化后SQL: {good_sql}")
+    ])
+
+    # 动态生成标签
+    tags: ExperienceTagging = (prompt | tagging_chain).invoke({
+        "bad_sql": bad_sql,
+        "good_sql": draft.optimized_sql
+    })
+
+    # 2. 组装为 Chroma 需要的向量文档格式
+    doc = Document(
+        page_content=tags.diagnosis,  # 核心向量特征：用病理描述去计算相似度
+        metadata={
+            "db_type": db_engine,
+            "anti_pattern": tags.anti_pattern,
+            "example_bad": bad_sql,
+            "example_good": draft.optimized_sql
+        }
+    )
+
+    # 3. 永久写入本地向量库
+    vector_store.add_documents([doc])
+    print(f"\n 新经验已自动入库！标签分类: {tags.anti_pattern}")
+    print(f" 提炼法则: {tags.diagnosis}\n")
+
+    # 状态无需改变，只做副作用操作 (Side Effect)
+    return {}
 # 初始化一张图，状态挂载上去
 workflow = StateGraph(AgenticState)
 workflow.add_node("retriever", retriever_node)
@@ -140,6 +183,7 @@ workflow.add_node("generator", generator_node)
 workflow.add_node("tools", tool_node)
 workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("parse_json", parse_json_node)
+workflow.add_node("memory_node", memory_node)
 
 workflow.add_edge(START, "retriever")
 workflow.add_edge("retriever", "generator")
@@ -162,7 +206,7 @@ workflow.add_edge("parse_json", "evaluator")
 def route_after_evaluation(state: AgenticState) -> str:
     """根据审查分数决定是结束还是重做"""
     if state.get("review_score", 0) > 80:
-        return END
+        return "memory_node"
     else:
         return "generator"
 
@@ -170,6 +214,6 @@ workflow.add_conditional_edges(
     "evaluator",
     route_after_evaluation
 )
-
+workflow.add_edge("memory_node", END)
 # 编译成可执行的 Agent 引擎
 agent_app = workflow.compile()

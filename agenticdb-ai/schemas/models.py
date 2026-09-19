@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 class SqlOptimizationDraft(BaseModel):
     thinking: str = Field(description="CoT推导：原SQL慢的原因分析")
-    optimizedSql: str = Field(description="最终优化后的SQL")
+    optimized_sql: str = Field(description="最终优化后的SQL")
     reason: str = Field(description="优化理由总结")
 
 class EvaluationResult(BaseModel):
