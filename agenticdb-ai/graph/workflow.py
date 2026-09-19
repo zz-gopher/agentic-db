@@ -1,9 +1,9 @@
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import tools_condition
 from langgraph.prebuilt import ToolNode
 
 from core.config import llm
+from retrievers.vector_repo import vector_store
 from schemas.models import SqlOptimizationDraft, EvaluationResult
 from tools.db_tools import get_table_schema
 from langchain_core.prompts import ChatPromptTemplate
@@ -16,27 +16,30 @@ tool_node = ToolNode(tools)
 def generator_node(state: AgenticState) -> dict:
     bad_sql = state.get("bad_sql", "")
     table_schema = state.get("table_schema", "暂无表结构，请调用 get_table_schema")
-
+    db_engine = state.get("db_engine", "mysql")
+    examples = state.get("examples", "未检索到相关经验。")
     # 把真实的工具，和 Pydantic 模型（结构化输出）一起绑给大模型！
     tools_and_schemas = [get_table_schema, SqlOptimizationDraft]
     llm_with_tools = llm.bind_tools(tools_and_schemas)
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """你是资深数据库架构师。
+        ("system", """你是资深数据库架构师。当前操作的数据库方言为：{db_engine}
+                {examples}
                 当前表结构：{schema}
-
                 【最高指令约束】：
                 1. 如果不懂表结构，立刻调用 get_table_schema 工具。
                 2. 如果已经拿到表结构，绝对不要输出任何普通的聊天文本！
                 3. 所有的分析和思考，必须且只能写在 SqlOptimizationDraft 工具的 thinking 字段里！
                 4. 请直接调用 SqlOptimizationDraft 工具提交最终方案！"""),
-        ("user", "{bad_sql}"),
+                    ("user", "{bad_sql}"),
         ("placeholder", "{messages}")
     ])
 
     response = (prompt | llm_with_tools).invoke({
         "bad_sql": bad_sql,
         "schema": table_schema,
+        "db_engine": db_engine,
+        "examples": examples,
         "messages": state.get("messages", [])
     })
 
@@ -104,20 +107,44 @@ def route_after_generation(state: AgenticState) -> str:
 
     return END
 
+
+def retriever_node(state: AgenticState):
+    bad_sql = state["bad_sql"]
+    # 如果没传，默认当做 mysql 处理
+    db_engine = state.get("db_engine", "mysql")
+
+    # 1. 带标签精准查询
+    results = vector_store.similarity_search(
+        query=bad_sql,
+        k=2,
+        filter={"db_type": db_engine}
+    )
+
+    # 2. 格式化组装
+    if results:
+        examples_str = "【参考历史经验】\n"
+        for idx, doc in enumerate(results):
+            examples_str += f"案例 {idx + 1}:\n诊断法则: {doc.page_content}\n"
+            examples_str += f"反面SQL: {doc.metadata.get('example_bad', '')}\n"
+            examples_str += f"标准解法: {doc.metadata.get('example_good', '')}\n\n"
+    else:
+        examples_str = "未检索到相关经验，请完全依赖自身工具与逻辑进行优化。"
+
+    # 3. 返回更新的增量状态
+    return {"examples": examples_str}
+
 # 初始化一张图，状态挂载上去
 workflow = StateGraph(AgenticState)
-# 往图里注册【三个】节点
+workflow.add_node("retriever", retriever_node)
 workflow.add_node("generator", generator_node)
 workflow.add_node("tools", tool_node)
 workflow.add_node("evaluator", evaluator_node)
-workflow.add_node("parse_json", parse_json_node) # 新增的解析节点
+workflow.add_node("parse_json", parse_json_node)
 
-# ==========================================
-# 定义连线与路由 (Edges)
-# ==========================================
-# 入口直接连向大模型思考节点
-workflow.add_edge(START, "generator")
-# 条件路由: 思考后的分支
+workflow.add_edge(START, "retriever")
+workflow.add_edge("retriever", "generator")
+
+# 条件路由: 思考后的分支 (保持你原来的完美逻辑不变)
 workflow.add_conditional_edges(
     "generator",
     route_after_generation,
@@ -127,19 +154,22 @@ workflow.add_conditional_edges(
         END: END
     }
 )
+
 # 执行完毕，拿到 DDL 后，必须回到 generator，让大模型看着新 DDL 重新作答
 workflow.add_edge("tools", "generator")
 workflow.add_edge("parse_json", "evaluator")
+
 def route_after_evaluation(state: AgenticState) -> str:
     """根据审查分数决定是结束还是重做"""
     if state.get("review_score", 0) > 80:
-        return END          # 及格，大功告成，走向终点
+        return END
     else:
-        return "generator"  # 不及格，带着反馈意见回到起点重写！
+        return "generator"
 
 workflow.add_conditional_edges(
     "evaluator",
     route_after_evaluation
 )
+
 # 编译成可执行的 Agent 引擎
 agent_app = workflow.compile()

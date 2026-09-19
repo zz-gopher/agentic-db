@@ -6,10 +6,9 @@ os.environ["HTTPS_PROXY"] = ""
 os.environ["ALL_PROXY"] = ""
 os.environ["NO_PROXY"] = "*"
 from dotenv import load_dotenv
+load_dotenv()
 from langchain_openai import ChatOpenAI
 import httpx
-
-load_dotenv()
 
 direct_client = httpx.Client(trust_env=False)
 # 获取环境变量中的 Key
