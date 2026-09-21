@@ -4,7 +4,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.documents import Document
 from core.config import llm
 from retrievers.vector_repo import vector_store
-from schemas.models import SqlOptimizationDraft, EvaluationResult, ExperienceTagging
+from schemas.models import SqlOptimizationDraft, EvaluationResult, ExperienceTagging, DiagnosticResult
 from tools.db_tools import get_table_schema
 from langchain_core.prompts import ChatPromptTemplate
 from graph.state import AgenticState
@@ -22,18 +22,18 @@ def generator_node(state: AgenticState) -> dict:
     tools_and_schemas = [get_table_schema, SqlOptimizationDraft]
     llm_with_tools = llm.bind_tools(tools_and_schemas)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """你是资深数据库架构师。当前操作的数据库方言为：{db_engine}
-                {examples}
-                当前表结构：{schema}
-                【最高指令约束】：
-                1. 如果不懂表结构，立刻调用 get_table_schema 工具。
-                2. 如果已经拿到表结构，绝对不要输出任何普通的聊天文本！
-                3. 所有的分析和思考，必须且只能写在 SqlOptimizationDraft 工具的 thinking 字段里！
-                4. 请直接调用 SqlOptimizationDraft 工具提交最终方案！"""),
-                    ("user", "{bad_sql}"),
-        ("placeholder", "{messages}")
-    ])
+    prompt = f"""你是一个顶级的数据库优化专家。
+        【原始 SQL】: {bad_sql}
+        【表结构】: {table_schema}
+
+        【知识库调取的优化法则】:
+        {examples}  <-- 这里现在全是纯粹的病理法则，比如“避免在索引列套用函数”
+
+        任务：
+        1. 请结合你自身的推理能力，判断上述法则是否适用于当前的 SQL。如果适用，该如何组合这些法则？
+        2. 针对这句复杂的 SQL，逐层推导优化方案，并在 thinking 字段中写下你的推理过程。
+        3. 输出最终的优化 SQL。
+        """
 
     response = (prompt | llm_with_tools).invoke({
         "bad_sql": bad_sql,
@@ -107,32 +107,24 @@ def route_after_generation(state: AgenticState) -> str:
 
     return END
 
+# 查询历史经验
+def retriever_node(state: AgenticState) -> dict:
+    diagnoses = state.get("suspected_diagnoses", [])
 
-def retriever_node(state: AgenticState):
-    bad_sql = state["bad_sql"]
-    # 如果没传，默认当做 mysql 处理
-    db_engine = state.get("db_engine", "mysql")
+    if not diagnoses:
+        return {"examples": []}
 
-    # 1. 带标签精准查询
+    # 利用 ChromaDB 的 metadata 过滤功能
+    # 只要命中了疑似的标签，就把库里对应的“精华法则”抽调出来
     results = vector_store.similarity_search(
-        query=bad_sql,
-        k=2,
-        filter={"db_type": db_engine}
+        query="",  # 不再需要做向量比对
+        k=5,
+        filter={"anti_pattern": {"$in": diagnoses}}  # 直接匹配反模式标签
     )
 
-    # 2. 格式化组装
-    if results:
-        examples_str = "【参考历史经验】\n"
-        for idx, doc in enumerate(results):
-            examples_str += f"案例 {idx + 1}:\n诊断法则: {doc.page_content}\n"
-            examples_str += f"反面SQL: {doc.metadata.get('example_bad', '')}\n"
-            examples_str += f"标准解法: {doc.metadata.get('example_good', '')}\n\n"
-    else:
-        examples_str = "未检索到相关经验，请完全依赖自身工具与逻辑进行优化。"
-
-    # 3. 返回更新的增量状态
-    return {"examples": examples_str}
-
+    # 提取纯粹的优化法则片段
+    rules = [doc.page_content for doc in results]
+    return {"examples": rules}
 
 def memory_node(state: AgenticState) -> dict:
     bad_sql = state.get("bad_sql", "")
@@ -176,8 +168,30 @@ def memory_node(state: AgenticState) -> dict:
 
     # 状态无需改变，只做副作用操作 (Side Effect)
     return {}
+
+
+def diagnostic_node(state: AgenticState) -> dict:
+    bad_sql = state["bad_sql"]
+    schema = state.get("table_schema", "")
+
+    # 让大模型先用自己的原生智力“看个大概”
+    prompt = f"""分析以下 SQL 和表结构，推理它可能犯了哪些数据库反模式错误。
+    SQL: {bad_sql}
+    表结构: {schema}
+    请用一句话描述病因，并给出疑似的反模式标签。"""
+
+    chain = llm.with_structured_output(DiagnosticResult)
+    result = chain.invoke(prompt)
+
+    return {
+        "suspected_diagnoses": result.suspected_patterns,
+        # 可以把大模型的初步推理记录进消息流，供后续节点参考
+        "messages": [HumanMessage(content=f"初步诊断: {result.diagnostic_reasoning}")]
+    }
+
 # 初始化一张图，状态挂载上去
 workflow = StateGraph(AgenticState)
+workflow.add_node("diagnostic_node", diagnostic_node)
 workflow.add_node("retriever", retriever_node)
 workflow.add_node("generator", generator_node)
 workflow.add_node("tools", tool_node)
@@ -185,7 +199,8 @@ workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("parse_json", parse_json_node)
 workflow.add_node("memory_node", memory_node)
 
-workflow.add_edge(START, "retriever")
+workflow.add_edge(START, "diagnostic_node")
+workflow.add_edge("diagnostic_node", "retriever")
 workflow.add_edge("retriever", "generator")
 
 # 条件路由: 思考后的分支 (保持你原来的完美逻辑不变)
