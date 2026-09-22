@@ -20,3 +20,7 @@ class ExperienceTagging(BaseModel):
 class DiagnosticResult(BaseModel):
     suspected_patterns: list[AntiPatternTag] = Field(description="疑似的反模式标签列表。必须且只能从预设的枚举选项中选择。")
     diagnostic_reasoning: str = Field(description="对这句 SQL 可能存在的性能瓶颈的自然语言描述")
+
+class TableExtraction(BaseModel):
+    # 它会自动输出一个包含多个元素的列表，例如：["users", "orders", "products"]
+    tables: list[str] = Field(description="SQL中涉及的所有表名列表")

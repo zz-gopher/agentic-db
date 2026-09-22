@@ -4,7 +4,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.documents import Document
 from core.config import llm
 from retrievers.vector_repo import vector_store
-from schemas.models import SqlOptimizationDraft, EvaluationResult, ExperienceTagging, DiagnosticResult
+from schemas.models import SqlOptimizationDraft, EvaluationResult, ExperienceTagging, DiagnosticResult, TableExtraction
 from tools.db_tools import get_table_schema
 from langchain_core.prompts import ChatPromptTemplate
 from graph.state import AgenticState
@@ -15,36 +15,33 @@ tool_node = ToolNode(tools)
 
 def generator_node(state: AgenticState) -> dict:
     bad_sql = state.get("bad_sql", "")
-    table_schema = state.get("table_schema", "暂无表结构，请调用 get_table_schema")
+    table_schema = state.get("table_schema", "暂无表结构")
     db_engine = state.get("db_engine", "mysql")
-    examples = state.get("examples", "未检索到相关经验。")
-    # 把真实的工具，和 Pydantic 模型（结构化输出）一起绑给大模型！
-    tools_and_schemas = [get_table_schema, SqlOptimizationDraft]
+    examples_list = state.get("examples", [])
+    examples_str = "\n".join(examples_list) if examples_list else "未检索到相关经验。"
+
+    tools_and_schemas = [SqlOptimizationDraft]
     llm_with_tools = llm.bind_tools(tools_and_schemas)
 
-    prompt = f"""你是一个顶级的数据库优化专家。
+    prompt = ChatPromptTemplate.from_template("""你是一个顶级的数据库优化专家。
         【原始 SQL】: {bad_sql}
-        【表结构】: {table_schema}
+        【表结构】: {schema}
 
         【知识库调取的优化法则】:
-        {examples}  <-- 这里现在全是纯粹的病理法则，比如“避免在索引列套用函数”
+        {examples}
 
         任务：
-        1. 请结合你自身的推理能力，判断上述法则是否适用于当前的 SQL。如果适用，该如何组合这些法则？
-        2. 针对这句复杂的 SQL，逐层推导优化方案，并在 thinking 字段中写下你的推理过程。
-        3. 输出最终的优化 SQL。
-        """
+        1. 结合知识库法则和表结构，推导优化方案，并在 thinking 字段写下推理过程。
+        2. 必须调用 SqlOptimizationDraft 工具输出最终的优化方案。
+        """)
 
     response = (prompt | llm_with_tools).invoke({
         "bad_sql": bad_sql,
         "schema": table_schema,
-        "db_engine": db_engine,
-        "examples": examples,
-        "messages": state.get("messages", [])
+        "examples": examples_str
     })
 
     return {"messages": [response]}
-
 
 def evaluator_node(state: AgenticState) -> dict:
     """批评家节点：负责打分，如果不通过则生成反馈消息"""
@@ -175,13 +172,25 @@ def diagnostic_node(state: AgenticState) -> dict:
     schema = state.get("table_schema", "")
 
     # 让大模型先用自己的原生智力“看个大概”
-    prompt = f"""分析以下 SQL 和表结构，推理它可能犯了哪些数据库反模式错误。
-    SQL: {bad_sql}
-    表结构: {schema}
-    请用一句话描述病因，并给出疑似的反模式标签。"""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """你是一个顶级的数据库性能诊断专家。请仔细分析 SQL 的性能瓶颈。
 
-    chain = llm.with_structured_output(DiagnosticResult)
-    result = chain.invoke(prompt)
+            你必须从以下反模式标签库中选择对应的病因（可多选）：
+            - func_index: 在 WHERE 条件的等号左侧对字段使用了函数或计算。
+            - implicit_conversion: 传入的参数类型与表字段类型不一致，导致隐式转换。
+            - select_all: 在没有必要的情况下使用了 SELECT *。
+            - deep_paging: 使用了 LIMIT M, N 且 M 的值非常大。
+            - missing_join_index: JOIN 关联的多表字段没有建立有效索引。
+            - other: 明确不属于以上任何一种情况。"""),
+
+        ("user", "【分析这句SQL】: {bad_sql} \n【表结构】: {schema}")
+    ])
+
+    chain = prompt | llm.with_structured_output(DiagnosticResult, method="function_calling")
+    result = chain.invoke({
+        "bad_sql": bad_sql,
+        "schema": schema
+    })
 
     return {
         "suspected_diagnoses": result.suspected_patterns,
@@ -189,46 +198,51 @@ def diagnostic_node(state: AgenticState) -> dict:
         "messages": [HumanMessage(content=f"初步诊断: {result.diagnostic_reasoning}")]
     }
 
+
+def prepare_schema_node(state: AgenticState) -> dict:
+    """前置节点：专门负责提取表名并获取表结构，然后再进入诊断"""
+    bad_sql = state["bad_sql"]
+
+    # 1. 快速提取表名
+    extractor = llm.with_structured_output(TableExtraction, method="function_calling")
+    result = extractor.invoke(f"请提取以下SQL中涉及的所有数据库表名，只需返回表名即可：\n{bad_sql}")
+
+    # 2. 循环调用现有的查表工具
+    schemas = []
+    for table_name in result.tables:
+        try:
+            schema_info = get_table_schema.invoke({"table_name": table_name})
+            schemas.append(f"-- 表 {table_name} 结构 --\n{schema_info}")
+        except Exception as e:
+            schemas.append(f"-- 表 {table_name} 结构获取失败: {e} --")
+
+    return {"table_schema": "\n".join(schemas)}
+
 # 初始化一张图，状态挂载上去
 workflow = StateGraph(AgenticState)
+workflow.add_node("prepare_schema", prepare_schema_node)
 workflow.add_node("diagnostic_node", diagnostic_node)
 workflow.add_node("retriever", retriever_node)
 workflow.add_node("generator", generator_node)
-workflow.add_node("tools", tool_node)
 workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("parse_json", parse_json_node)
 workflow.add_node("memory_node", memory_node)
 
-workflow.add_edge(START, "diagnostic_node")
-workflow.add_edge("diagnostic_node", "retriever")
-workflow.add_edge("retriever", "generator")
-
-# 条件路由: 思考后的分支 (保持你原来的完美逻辑不变)
-workflow.add_conditional_edges(
-    "generator",
-    route_after_generation,
-    {
-        "tools": "tools",            # 如果返回 "tools"，就走向 tools 节点
-        "parse_json": "parse_json",  # 如果返回 "parse_json"，就走向 parse_json 节点
-        END: END
-    }
-)
-
-# 执行完毕，拿到 DDL 后，必须回到 generator，让大模型看着新 DDL 重新作答
-workflow.add_edge("tools", "generator")
-workflow.add_edge("parse_json", "evaluator")
+workflow.add_edge(START, "prepare_schema")             # 1. 查表结构
+workflow.add_edge("prepare_schema", "diagnostic_node") # 2. 根据表结构和SQL看病
+workflow.add_edge("diagnostic_node", "retriever")      # 3. 找药方
+workflow.add_edge("retriever", "generator")            # 4. 生成草案
+workflow.add_edge("generator", "parse_json")           # 5. 解析 JSON
+workflow.add_edge("parse_json", "evaluator")           # 6. 审查打分
 
 def route_after_evaluation(state: AgenticState) -> str:
-    """根据审查分数决定是结束还是重做"""
     if state.get("review_score", 0) > 80:
         return "memory_node"
     else:
         return "generator"
 
-workflow.add_conditional_edges(
-    "evaluator",
-    route_after_evaluation
-)
+workflow.add_conditional_edges("evaluator", route_after_evaluation)
 workflow.add_edge("memory_node", END)
+
 # 编译成可执行的 Agent 引擎
 agent_app = workflow.compile()
