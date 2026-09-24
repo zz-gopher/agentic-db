@@ -15,7 +15,7 @@ if __name__ == "__main__":
     print("⏳ 正在唤醒 Agent 并加载本地模型，请稍候...")
     # ... 在这里，顶部的 import 已经把模型和图加载进内存了 ...
     print("✅ 系统就绪！")
-    bad_query = "SELECT * FROM user_logs WHERE DATE(created_at) = '2026-03-01'"
+    bad_query = "SELECT * FROM notes WHERE DATE(created_at) = '2026-03-01'"
     while True:
         # 1. 持续监听输入
         bad_query = input("\n👇 请输入烂 SQL (输入 'q' 退出): ")

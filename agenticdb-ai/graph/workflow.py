@@ -4,9 +4,7 @@ from graph.state import AgenticState
 # 1. 导入所有拆分出去的节点
 from nodes.schema_prepare import prepare_schema_node
 from nodes.diagnostic import diagnostic_node
-from nodes.retriever import retriever_node
 from nodes.generator import generator_node
-from nodes.parse_json import parse_json_node
 from nodes.evaluator import evaluator_node
 from nodes.memory import memory_node
 
@@ -16,19 +14,15 @@ workflow = StateGraph(AgenticState)
 # 3. 注册所有节点
 workflow.add_node("prepare_schema", prepare_schema_node)
 workflow.add_node("diagnostic_node", diagnostic_node)
-workflow.add_node("retriever", retriever_node)
 workflow.add_node("generator", generator_node)
-workflow.add_node("parse_json", parse_json_node)
 workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("memory_node", memory_node)
 
 # 4. 连线：主干流水线
 workflow.add_edge(START, "prepare_schema")
 workflow.add_edge("prepare_schema", "diagnostic_node")
-workflow.add_edge("diagnostic_node", "retriever")
-workflow.add_edge("retriever", "generator")
-workflow.add_edge("generator", "parse_json")
-workflow.add_edge("parse_json", "evaluator")
+workflow.add_edge("diagnostic_node", "generator")
+workflow.add_edge("generator", "evaluator")
 
 # 5. 连线：评测与重试路由（引入了防死循环机制）
 def route_after_evaluation(state: AgenticState) -> str:
