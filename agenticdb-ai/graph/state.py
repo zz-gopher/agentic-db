@@ -7,8 +7,10 @@ class AgenticState(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     bad_sql: str
     db_engine: str
+    db_uri: str
     suspected_diagnoses: list[str] # 用于存放 LLM 对这句 SQL 的初步病理诊断和疑似标签
     examples: str
     table_schema: Optional[str]        # 明确的表结构字段
     final_draft: Optional[SqlOptimizationDraft] # 明确的最终 JSON 结果字段
     review_score: Optional[int]  # 记录批评家给出的分数
+    retry_count: int
