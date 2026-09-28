@@ -1,9 +1,11 @@
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import ValidationError
 
 from core.config import llm
 from graph.state import AgenticState
 from retrievers.vector_repo import vector_store
+from schemas.enums import AntiPatternTag
 from schemas.models import DiagnosticResult
 
 
@@ -26,10 +28,24 @@ def diagnostic_node(state: AgenticState) -> dict:
     ])
 
     chain = prompt | llm.with_structured_output(DiagnosticResult, method="function_calling")
-    result = chain.invoke({
-        "bad_sql": bad_sql,
-        "schema": schema
-    })
+    try:
+        result = chain.invoke({
+            "bad_sql": bad_sql,
+            "schema": schema
+        })
+    except ValidationError as e:
+        print(f"⚠️ 大模型输出格式崩坏或生造标签，触发降级保护: {e}")
+        # 强制降级：构造一个安全的默认结果，防止整个节点崩溃
+        result = DiagnosticResult(
+            suspected_patterns=[AntiPatternTag.OTHER],
+            diagnostic_reasoning="LLM 诊断格式异常，自动降级为未知错误。"
+        )
+    except Exception as e:
+        print(f"⚠️ 诊断节点发生未知错误: {e}")
+        return {
+            "is_valid": False,
+            "messages": [HumanMessage(content=f"【阻断】诊断专家服务异常，流程终止。详细信息: {e}")]
+        }
     # 2. 利用诊断出的标签，利用 ChromaDB 的 metadata 进行精准过滤
     examples_list = []
     if result.suspected_patterns:

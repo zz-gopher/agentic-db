@@ -17,22 +17,27 @@ workflow.add_node("diagnostic_node", diagnostic_node)
 workflow.add_node("generator", generator_node)
 workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("memory_node", memory_node)
+def check_valid_and_route(next_node: str):
+    def router(state: AgenticState) -> str:
+        if state.get("is_valid", True) == False:
+            return END
+        return next_node
+    return router
 
+def route_after_evaluation(state: AgenticState) -> str:
+    if state.get("is_valid", True) == False:
+        return END
+    if state.get("retry_count", 0) >= 3:
+        return END
+    if state.get("review_score", 0) > 80:
+        return "memory_node"
+    else:
+        return "generator"
 # 4. 连线：主干流水线
 workflow.add_edge(START, "prepare_schema")
-workflow.add_edge("prepare_schema", "diagnostic_node")
-workflow.add_edge("diagnostic_node", "generator")
-workflow.add_edge("generator", "evaluator")
-
-# 5. 连线：评测与重试路由（引入了防死循环机制）
-def route_after_evaluation(state: AgenticState) -> str:
-    if state.get("retry_count", 0) >= 3:
-        return END  # 超过3次打回，强行终止
-    if state.get("review_score", 0) > 80:
-        return "memory_node" # 审核通过，去入库
-    else:
-        return "generator"   # 没通过，滚回去重写
-
+workflow.add_conditional_edges("prepare_schema", check_valid_and_route("diagnostic_node"))
+workflow.add_conditional_edges("diagnostic_node", check_valid_and_route("generator"))
+workflow.add_conditional_edges("generator", check_valid_and_route("evaluator"))
 workflow.add_conditional_edges("evaluator", route_after_evaluation)
 workflow.add_edge("memory_node", END)
 

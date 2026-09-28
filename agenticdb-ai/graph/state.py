@@ -14,3 +14,4 @@ class AgenticState(TypedDict):
     final_draft: Optional[SqlOptimizationDraft] # 明确的最终 JSON 结果字段
     review_score: Optional[int]  # 记录批评家给出的分数
     retry_count: int
+    is_valid: bool
