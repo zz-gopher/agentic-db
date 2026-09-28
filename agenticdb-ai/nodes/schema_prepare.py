@@ -35,14 +35,15 @@ def prepare_schema_node(state: AgenticState) -> dict:
     missing_tables = []
     for table_name in tables:
         try:
-            schema_info = get_table_schema.invoke(table_name)
-
+            schema_result = get_table_schema.invoke(table_name)
             # 判断物理探针是否返回了警告或失败
-            if "【警告】" in schema_info or "【提取失败】" in schema_info:
-                schemas.append(f"-- 表 {table_name} 物理探针异常: {schema_info} --")
-                missing_tables.append(table_name)  # 记录这只“漏网之鱼”
+            if not schema_result.get("success", False):
+                error_detail = schema_result.get("msg", "未知错误")
+                schemas.append(f"-- 表 {table_name} 物理探针异常: {error_detail} --")
+                missing_tables.append(table_name)
             else:
-                schemas.append(f"-- 表 {table_name} 真实结构 --\n{schema_info}")
+                ddl = schema_result.get("ddl", "")
+                schemas.append(f"-- 表 {table_name} 真实结构 --\n{ddl}")
         except Exception as e:
             schemas.append(f"-- 表 {table_name} 结构获取发生系统错误: {e} --")
             missing_tables.append(table_name)  # 系统报错也视为表不可用

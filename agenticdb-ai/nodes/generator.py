@@ -18,18 +18,25 @@ def generator_node(state: AgenticState) -> dict:
         }
     examples_list = state.get("examples", [])
     examples_str = "\n".join(examples_list) if examples_list else "未检索到相关经验。"
+    messages = state.get("messages", [])
+    feedback_history = ""
+    for msg in reversed(messages):
+        if "沙箱审查未通过" in msg.content or "物理沙箱执行失败" in msg.content:
+            feedback_history = msg.content
+            break  # 只取最新的一次打回意见，防止上下文过长
 
+    feedback_context = f"\n【前次沙箱测试报错，请务必修复！】:\n{feedback_history}\n" if feedback_history else ""
     generator_chain = llm.with_structured_output(SqlOptimizationDraft, method="function_calling")
 
     prompt = ChatPromptTemplate.from_template("""你是一个顶级的数据库优化专家。
-        【原始 SQL】: {bad_sql}
-        【表结构】: {schema}
+            【原始 SQL】: {bad_sql}
+            【表结构】: {schema}
 
-        【知识库调取的优化法则】:
-        {examples}
-
-        任务：结合知识库法则和表结构，推导优化方案，并在 thinking 字段写下推理过程。
-        """)
+            【知识库调取的优化法则】:
+            {examples}
+            {feedback_context}
+            任务：结合知识库法则和表结构推导优化方案。如果存在报错反馈，请首先在 thinking 字段反思错误原因并确保在本次草案中修复！
+            """)
 
     # 调用大模型，拿到的一定是直接解析好的 SqlOptimizationDraft 对象
     try:
@@ -37,7 +44,8 @@ def generator_node(state: AgenticState) -> dict:
         draft_obj: SqlOptimizationDraft = (prompt | generator_chain).invoke({
             "bad_sql": bad_sql,
             "schema": table_schema,
-            "examples": examples_str
+            "examples": examples_str,
+            "feedback_context": feedback_context
         })
     except ValidationError as e:
         # Pydantic 校验失败（大模型输出的 JSON 漏了字段）

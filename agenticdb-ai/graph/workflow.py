@@ -28,10 +28,12 @@ def route_after_evaluation(state: AgenticState) -> str:
     if state.get("is_valid", True) == False:
         return END
     if state.get("retry_count", 0) >= 3:
+        print("🛑 触发熔断：多次优化依然无法通过物理沙箱审查，放弃流转。")
         return END
-    if state.get("review_score", 0) > 80:
+    if state.get("review_score", 0) >= 70:
         return "memory_node"
     else:
+        print(f"🔄 沙箱审查未通过(当前分数: {state.get('review_score')})，已打回 Generator 重写...")
         return "generator"
 # 4. 连线：主干流水线
 workflow.add_edge(START, "prepare_schema")
