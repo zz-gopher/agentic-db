@@ -78,8 +78,7 @@ def evaluator_node(state: AgenticState) -> dict:
         result: EvaluationResult = (prompt | evaluator_chain).invoke({
             "bad_sql": bad_sql,
             "optimized_sql": optimized_sql,
-            "logic_result": logic_result,
-            "explain_result": explain_result.get("data", "未获取到执行计划")
+            "explain_data": explain_result.get("data", "未获取到执行计划")
         })
     except ValidationError as e:
         print(f"⚠️ Evaluator 输出格式崩坏: {e}")
