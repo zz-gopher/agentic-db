@@ -1,20 +1,30 @@
-# Agentic-DB
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)
-![License](https://img.shields.io/badge/License-Apache_2.0-blue)
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
+<div align="center">
 
-[简体中文](./README.md) | [English](./README_EN.md)
+<!-- 如果你有 Logo，可以取消下面这行的注释并替换路径 -->
+<!-- <img src="assets/logo.svg" alt="Agentic-DB Logo" width="128" /> -->
+
+# Agentic-DB
+
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Ready-DD0031.svg)](https://langchain-ai.github.io/langgraph/)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-Memory-FF9900.svg)](https://www.trychroma.com/)
+[![MySQL](https://img.shields.io/badge/MySQL-Sandbox-4479A1.svg?logo=mysql&logoColor=white)](https://www.mysql.com/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/zz-gopher/agentic-db/pulls)
 
 **一个带“物理沙箱”和“记忆库”的生产级多智能体 SQL 优化系统**
 
+[English](README_EN.md) | 简体中文
+
+</div>
+
+
+## 🎯 核心理念
 市面上的 AI 写 SQL 工具往往是在“盲写”——大模型看一眼表结构，靠猜给出一个优化方案。但在真实的生产环境中，这种做法非常危险。AI 很容易擅自改变原有的业务逻辑（比如把 `LEFT JOIN` 改成 `INNER JOIN`），或者捏造出不存在的字段。
 
 Agentic-DB 提供了一种更安全的落地思路。它不仅让 AI 重写 SQL，还给 AI 穿上了一层约束衣：**物理沙箱测试**、**严格的客观审查**和**历史经验库**。任何一段优化后的代码，都必须在真实数据库里跑通，证明“查询结果没变”且“执行计划确实更优”，才会最终交付。
 
----
-
-## 🎯 核心理念
-我们希望把 AI 的代码生成能力，与传统 DBA 的严苛工程规范结合起来：
+围绕这一核心思路，我们将 AI 的创造力与传统 DBA 的严苛工程规范结合起来：
 
 - **绝对不破坏业务逻辑**：性能可以优化，规范可以提升，但查询结果绝对不能变。系统会通过比对优化前后的真实输出，一票否决任何企图篡改业务逻辑的草案。
 - **用事实打分，拒绝幻觉**：AI 不能凭空吹嘘自己的 SQL 有多快。系统会直连数据库抓取真实的 `EXPLAIN` 执行计划，基于客观指标（是否全表扫描、是否走索引）来评估。
