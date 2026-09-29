@@ -1,4 +1,7 @@
 # Agentic-DB
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)
+![License](https://img.shields.io/badge/License-Apache_2.0-blue)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
 **一个带“物理沙箱”和“记忆库”的生产级多智能体 SQL 优化系统**
 
