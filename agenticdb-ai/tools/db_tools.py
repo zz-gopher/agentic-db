@@ -1,18 +1,9 @@
-import os
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from core.config import settings
 from langchain_core.tools import tool
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-
-REAL_DB_URI = os.getenv("DB_URI", "mysql+pymysql://readonly_user:your_password@localhost:3306/your_database")
-
-
-# 初始化带连接池的引擎，pool_pre_ping=True 会在每次借出连接时测试是否断线
-schema_engine = create_engine(REAL_DB_URI, pool_pre_ping=True)
+schema_engine = create_engine(settings.db_uri, pool_pre_ping=True)
 
 @tool
 def get_table_schema(table_name: str) -> dict:

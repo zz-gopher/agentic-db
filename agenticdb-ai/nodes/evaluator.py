@@ -1,18 +1,14 @@
-import os
-import re
 from dotenv import load_dotenv
 
 load_dotenv()
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import ValidationError
-
-from core.config import llm
+from core.config import llm, settings
 from schemas.models import EvaluationResult
 from graph.state import AgenticState
 from tools.sandbox_tools import get_explain_plan, verify_logic_equivalence
 
-REAL_DB_URI = os.getenv("DB_URI", "mysql+pymysql://readonly_user:your_password@localhost:3306/your_database")
 
 def evaluator_node(state: AgenticState) -> dict:
     bad_sql = state.get("bad_sql", "")
@@ -28,7 +24,7 @@ def evaluator_node(state: AgenticState) -> dict:
 
     optimized_sql = draft.optimized_sql.replace("```sql", "").replace("```", "").strip(" \n\r\t;")
     print("⚙️ [物理沙箱] 正在运行 EXPLAIN 并校验数据一致性...")
-    explain_result = get_explain_plan(optimized_sql, REAL_DB_URI)
+    explain_result = get_explain_plan(optimized_sql, settings.db_uri)
     if not explain_result.get("success", False):
         print(f"🚫 触发物理一票否决！引擎报错信息: {explain_result.get('msg')}")
         feedback_msg = HumanMessage(
@@ -40,7 +36,7 @@ def evaluator_node(state: AgenticState) -> dict:
             "review_score": 0,
             "retry_count": retry_count + 1
         }
-    logic_result = verify_logic_equivalence(bad_sql, optimized_sql, REAL_DB_URI)
+    logic_result = verify_logic_equivalence(bad_sql, optimized_sql, settings.db_uri)
     if not logic_result.get("is_equivalent", False):
         print("🚫 触发物理一票否决！逻辑校验未通过，直接打回重审。")
         feedback_msg = HumanMessage(
