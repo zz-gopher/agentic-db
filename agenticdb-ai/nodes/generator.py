@@ -35,7 +35,13 @@ def generator_node(state: AgenticState) -> dict:
             【知识库调取的优化法则】:
             {examples}
             {feedback_context}
-            任务：结合知识库法则和表结构推导优化方案。如果存在报错反馈，请首先在 thinking 字段反思错误原因并确保在本次草案中修复！
+            
+            任务：结合知识库法则和表结构推导优化方案。如果存在报错反馈，请首先在 thinking 字段反思错误原因并在本次草案中修复。
+            
+            【⚠️ 极其严格的格式红线 ⚠️】：
+            1. 你的 optimized_sql 字段中【必须且只能】包含纯粹的 SELECT 语句，不能有 Markdown 代码块 (如 ```sql)，不能有 SQL 注释 (如 -- )，句尾不要加分号！
+            2. 绝对不允许在 optimized_sql 中混入 ALTER TABLE、CREATE INDEX 等 DDL 语句，否则会导致下游物理沙箱直接崩溃！
+            3. 如果你判断必须通过建索引才能解决全表扫描问题，请将建索引的 DDL 语句单独写入 `index_recommendations` 列表字段中。
             """)
 
     # 调用大模型，拿到的一定是直接解析好的 SqlOptimizationDraft 对象

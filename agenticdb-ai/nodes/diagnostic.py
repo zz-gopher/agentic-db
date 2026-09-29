@@ -50,13 +50,23 @@ def diagnostic_node(state: AgenticState) -> dict:
     examples_list = []
     if result.suspected_patterns:
         try:
-            # 核心精髓：不比对 SQL 字符串，直接按照病理标签过滤精华法则！
             search_results = vector_store.similarity_search(
-                query="",
-                k=3,
+                query=bad_sql,
+                k=2,  # 取最相似的2个案例即可，防止 Token 爆炸
                 filter={"anti_pattern": {"$in": result.suspected_patterns}}
             )
-            examples_list = [doc.page_content for doc in search_results]
+            if search_results:
+                print(f"\n🧠 [记忆检索] 成功从 ChromaDB 唤醒 {len(search_results)} 条相似历史经验:")
+            for i, doc in enumerate(search_results, 1):
+                example_str = (
+                    f"【历史相似烂SQL】: {doc.page_content}\n" 
+                    f"【当时成功的优化方案】: {doc.metadata.get('example_good')}\n"
+                    f"【优化总结】: {doc.metadata.get('diagnosis')}"
+                )
+                examples_list.append(example_str)
+                print(f"  ├─ 📚 历史案例 {i}: {doc.metadata.get('diagnosis')}")
+                print(f"  │  ❌ 原SQL: {doc.page_content.strip()}")
+                print(f"  │  ✅ 优解 : {doc.metadata.get('example_good').strip()}\n")
         except Exception as e:
             print(f"⚠️ 向量库标签检索失败: {e}")
     return {

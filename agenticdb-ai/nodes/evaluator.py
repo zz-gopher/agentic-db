@@ -1,4 +1,5 @@
 import os
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,8 +19,6 @@ def evaluator_node(state: AgenticState) -> dict:
     draft = state.get("final_draft")
     retry_count = state.get("retry_count", 0)
 
-
-
     # 兜底防御：上游要是传了个空的过来，直接熔断
     if not draft:
         return {
@@ -27,11 +26,11 @@ def evaluator_node(state: AgenticState) -> dict:
             "messages": [AIMessage(content="【阻断】评测沙箱未接收到优化草案，无法执行。")]
         }
 
-    optimized_sql = draft.optimized_sql
+    optimized_sql = draft.optimized_sql.replace("```sql", "").replace("```", "").strip(" \n\r\t;")
     print("⚙️ [物理沙箱] 正在运行 EXPLAIN 并校验数据一致性...")
     explain_result = get_explain_plan(optimized_sql, REAL_DB_URI)
     if not explain_result.get("success", False):
-        print("🚫 触发物理一票否决！大模型生成的 SQL 存在语法/方言错误。")
+        print(f"🚫 触发物理一票否决！引擎报错信息: {explain_result.get('msg')}")
         feedback_msg = HumanMessage(
             content=f"【致命错误】您的优化草案在物理沙箱中直接执行失败（语法错误或字段不明）！\n引擎报错信息: {explain_result.get('msg')}\n请仔细阅读报错，重新生成能够运行的 SQL 草案！"
         )
@@ -56,13 +55,14 @@ def evaluator_node(state: AgenticState) -> dict:
     evaluator_chain = llm.with_structured_output(EvaluationResult, method="function_calling")
     prompt = ChatPromptTemplate.from_messages([
         ("system", """你是一个冷酷的数据库架构审查主席。
-                    目前该 SQL 已完美通过物理沙箱的【可执行性测试】和【逻辑一致性测试】。
+                        目前该 SQL 已完美通过物理沙箱的【可执行性测试】和【逻辑一致性测试】。
 
-                    你的唯一任务是基于 EXPLAIN 执行计划，评估其【性能提升】：
-                    1. 扫描红线：阅读执行计划的 JSON，如果 type 是 ALL（全表扫描），或者没有走任何索引，必须判定 passed=False！
-                    2. 如果走了高效索引（如 ref, range, eq_ref），则基于优化程度打分。
+                        你的唯一任务是基于 EXPLAIN 执行计划，评估其【性能提升】：
+                        1. 扫描红线：阅读执行计划的 JSON，如果 type 是 ALL（全表扫描），或者没有走任何索引，必须判定 passed=False！
+                        2. 【新增：索引缺失豁免权】：如果你仔细审查草案后，发现 SQL 已经采用了最优的改写方案（例如完美消除了函数包裹、实现了 SARGable），但 EXPLAIN 依然是 ALL，这说明完全是【物理表缺失索引】导致的。此时，你允许判定 passed=True，给 80 分，但必须在 feedback 中提供具体的 ALTER TABLE 建索引建议！
+                        3. 如果走了高效索引（如 ref, range, eq_ref），则基于优化程度打分。
 
-                    满分100分，>70分 passed=True。"""),
+                        满分100分，>70分 passed=True。"""),
 
         ("user", """审查以下优化草案：
                     【原 SQL】: {bad_sql}

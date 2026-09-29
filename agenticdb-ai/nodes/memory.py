@@ -6,7 +6,6 @@ from graph.state import AgenticState
 from retrievers.vector_repo import vector_store
 from schemas.models import ExperienceTagging
 
-
 def memory_node(state: AgenticState) -> dict:
     bad_sql = state.get("bad_sql", "")
     draft = state.get("final_draft")
@@ -37,17 +36,18 @@ def memory_node(state: AgenticState) -> dict:
         "bad_sql": bad_sql,
         "good_sql": draft.optimized_sql
     })
-
+    anti_pattern_str = primary_anti_pattern.value if hasattr(primary_anti_pattern, 'value') else str(
+        primary_anti_pattern)
     # 3. 组装 Document 并强制传入 id 防重
     doc = Document(
-        page_content=tags.diagnosis,
+        page_content=bad_sql,
         metadata={
             "db_type": db_engine,
-            "anti_pattern": primary_anti_pattern,  # 直接使用复用的标签
-            "example_bad": bad_sql,
-            "example_good": draft.optimized_sql
+            "anti_pattern": anti_pattern_str,
+            "example_good": draft.optimized_sql,
+            "diagnosis": tags.diagnosis
         },
-        id=sql_hash  # 关键去重机制
+        id=sql_hash
     )
 
     # 4. 写入向量库 (带有相同 ID 时会自动 Upsert 覆盖)

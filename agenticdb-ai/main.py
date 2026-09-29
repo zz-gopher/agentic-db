@@ -32,10 +32,33 @@ if __name__ == "__main__":
         print("🚀 正在流转节点...")
         # 3. 执行工作流 (这里是秒级的，因为模型全在内存里)
         final_state = agent_app.invoke(initial_state)
+        score = final_state.get("review_score", 0)
+        is_valid = final_state.get("is_valid", True)
+        retry_count = final_state.get("retry_count", 0)
+        if is_valid and score >= 70:
+            draft = final_state.get("final_draft")
+            print(f"\n✅ 优化成功 (最终打分: {score}):")
 
-        # 4. 打印结果
-        draft = final_state.get("final_draft")
-        if draft:
-            print(f"\n✅ 优化成功 (打分: {final_state.get('review_score')}):")
-            print(draft.optimized_sql)
+            # 打印拆分后的结构化数据
+            if draft:
+                if draft.index_recommendations:
+                    print("-- 建议添加的索引 --")
+                    for idx_sql in draft.index_recommendations:
+                        print(idx_sql)
+                    print("----------------------")
 
+                print(f"{draft.optimized_sql}")
+
+        else:
+            print(f"\n❌ 优化失败或被熔断 (最终打分: {score})")
+
+            # 精准提示失败原因
+            if retry_count >= 3:
+                print("【失败原因】: 多次尝试均无法通过物理沙箱验证，触发系统熔断。")
+            elif not is_valid:
+                # 打印最后一条错误阻断信息
+                messages = final_state.get("messages", [])
+                if messages:
+                    print(f"【系统阻断】: {messages[-1].content}")
+            else:
+                print("【失败原因】: 审查官打分未达标。")
