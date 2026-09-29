@@ -3,6 +3,8 @@
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
+[简体中文](./README.md) | [English](./README_EN.md)
+
 **一个带“物理沙箱”和“记忆库”的生产级多智能体 SQL 优化系统**
 
 市面上的 AI 写 SQL 工具往往是在“盲写”——大模型看一眼表结构，靠猜给出一个优化方案。但在真实的生产环境中，这种做法非常危险。AI 很容易擅自改变原有的业务逻辑（比如把 `LEFT JOIN` 改成 `INNER JOIN`），或者捏造出不存在的字段。
