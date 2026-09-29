@@ -1,23 +1,32 @@
+<div align="center">
+
+<!-- 如果你有 Logo，可以取消下面这行的注释并替换路径 -->
+<!-- <img src="assets/logo.svg" alt="Agentic-DB Logo" width="128" /> -->
+
 # Agentic-DB
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)
-![License](https://img.shields.io/badge/License-Apache_2.0-blue)
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
-
-[简体中文](./README.md) | [English](./README_EN.md)
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Ready-DD0031.svg)](https://langchain-ai.github.io/langgraph/)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-Memory-FF9900.svg)](https://www.trychroma.com/)
+[![MySQL](https://img.shields.io/badge/MySQL-Sandbox-4479A1.svg?logo=mysql&logoColor=white)](https://www.mysql.com/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/zz-gopher/agentic-db/pulls)
 
 **A production-grade multi-agent SQL optimization system equipped with a "Physical Sandbox" and a "Memory Bank".**
 
-Existing AI SQL tools often operate in a "blind writing" mode—the LLM guesses an optimization strategy just by looking at the table schema. In a real production environment, this approach is extremely dangerous. AI can easily alter the original business logic without authorization (e.g., changing a `LEFT JOIN` to an `INNER JOIN`) or hallucinate non-existent fields.
+English | [简体中文](README.md)
 
-Agentic-DB provides a safer implementation approach. It not only utilizes AI to rewrite SQL but also restrains it with a **Physical Sandbox Test**, **Strict Objective Review**, and a **Historical Experience Bank**. Any optimized code must run successfully in a real database to prove that "the query results remain unchanged" and "the execution plan is genuinely better" before final delivery.
+</div>
 
 ---
 
 ## 🎯 Core Concepts
 
-We aim to combine the code generation capabilities of AI with the rigorous engineering standards of traditional DBAs:
+Existing AI SQL tools often operate in "blind writing" mode—the LLM guesses an optimization strategy just by looking at the table schema. In a real production environment, this approach is extremely dangerous. AI can easily alter the original business logic (e.g., changing a `LEFT JOIN` to an `INNER JOIN`) or hallucinate non-existent fields.
 
+Agentic-DB provides a safer implementation approach. It not only utilizes AI to rewrite SQL but also restrains it with a **Physical Sandbox Test**, **Strict Objective Review**, and a **Historical Experience Bank**. Any optimized code must run successfully in a real database to prove that "the query results remain unchanged" and "the execution plan is genuinely better" before final delivery.
+
+Around this core concept, we combine the creative capabilities of AI with the rigorous engineering standards of traditional DBAs:
 - **Absolute preservation of business logic**: Performance can be optimized and standards elevated, but query results must absolutely not change. The system uses real output comparisons before and after optimization to veto any drafts attempting to tamper with business logic.
 - **Fact-based scoring, zero hallucinations**: AI cannot boast about the speed of its SQL out of thin air. The system connects directly to the database to fetch real `EXPLAIN` execution plans and evaluates based on objective metrics (e.g., full table scans, index usage).
 - **Self-evolving "Error Log"**: Introduces a vector database (ChromaDB). Every time an SQL query is successfully optimized, the system saves it. When encountering similar "bad SQL" in the future, the AI will directly reference historical success cases to write the code.
