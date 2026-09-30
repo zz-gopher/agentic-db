@@ -15,39 +15,60 @@ def evaluator_node(state: AgenticState) -> dict:
     draft = state.get("final_draft")
     retry_count = state.get("retry_count", 0)
 
+    def _handle_retry(error_title: str, detailed_msg: str, score: int = 0) -> dict:
+        """统一处理打回逻辑，如果超过重试次数，直接触发死循环熔断"""
+        if retry_count >= 2:  # 0, 1, 2 已经是第三次失败了
+            block_msg = f"{error_title} (已达最大重试次数 3)。最后一次报错: {detailed_msg[:100]}"
+            print(f"🛑 触发熔断：{block_msg}")
+            return {
+                "is_valid": False,
+                "block_node": "evaluator_node (沙箱护栏)",
+                "block_reason": block_msg,
+                "messages": [AIMessage(content=f"【阻断】{block_msg}")]
+            }
+
+        # 还没超限，正常打回让 Generator 重写
+        return {
+            "is_valid": True,
+            "messages": [HumanMessage(content=f"{error_title}\n{detailed_msg}\n请立即修复并重新生成 SQL！")],
+            "review_score": score,
+            "retry_count": retry_count + 1
+        }
+
+    # ==========================================
+
     # 兜底防御：上游要是传了个空的过来，直接熔断
     if not draft:
+        error_msg = f"【阻断】评测沙箱未接收到优化草案，无法执行。"
         return {
             "is_valid": False,
-            "messages": [AIMessage(content="【阻断】评测沙箱未接收到优化草案，无法执行。")]
+            "block_node": "evaluator_node (评测)",
+            "block_reason": error_msg,
+            "messages": [AIMessage(content=error_msg)]
         }
 
     optimized_sql = draft.optimized_sql.replace("```sql", "").replace("```", "").strip(" \n\r\t;")
     print("⚙️ [物理沙箱] 正在运行 EXPLAIN 并校验数据一致性...")
+
+    # 1. 物理执行校验
     explain_result = get_explain_plan(optimized_sql, settings.db_uri)
     if not explain_result.get("success", False):
         print(f"🚫 触发物理一票否决！引擎报错信息: {explain_result.get('msg')}")
-        feedback_msg = HumanMessage(
-            content=f"【致命错误】您的优化草案在物理沙箱中直接执行失败（语法错误或字段不明）！\n引擎报错信息: {explain_result.get('msg')}\n请仔细阅读报错，重新生成能够运行的 SQL 草案！"
+        return _handle_retry(
+            error_title="【致命错误】优化草案在物理沙箱中直接执行失败（语法错误或字段不明）！",
+            detailed_msg=explain_result.get('msg')
         )
-        return {
-            "is_valid": True,
-            "messages": [feedback_msg],
-            "review_score": 0,
-            "retry_count": retry_count + 1
-        }
+
+    # 2. 逻辑等价校验
     logic_result = verify_logic_equivalence(bad_sql, optimized_sql, settings.db_uri)
     if not logic_result.get("is_equivalent", False):
         print("🚫 触发物理一票否决！逻辑校验未通过，直接打回重审。")
-        feedback_msg = HumanMessage(
-            content=f"【物理沙箱执行失败】您的优化草案改变了原有的业务逻辑！\n沙箱反馈: {logic_result.get('msg')}\n请立即修复并重新生成 SQL！"
+        return _handle_retry(
+            error_title="【物理沙箱执行失败】您的优化草案改变了原有的业务逻辑！",
+            detailed_msg=logic_result.get('msg')
         )
-        return {
-            "is_valid": True,  # 流程继续流转（打回），没有彻底崩溃
-            "messages": [feedback_msg],
-            "review_score": 0,
-            "retry_count": retry_count + 1
-        }
+
+    # 3. LLM 审查打分
     evaluator_chain = llm.with_structured_output(EvaluationResult, method="function_calling")
     prompt = ChatPromptTemplate.from_messages([
         ("system", """你是一个冷酷的数据库架构审查主席。
@@ -59,7 +80,6 @@ def evaluator_node(state: AgenticState) -> dict:
                         3. 如果走了高效索引（如 ref, range, eq_ref），则基于优化程度打分。
 
                         满分100分，>70分 passed=True。"""),
-
         ("user", """审查以下优化草案：
                     【原 SQL】: {bad_sql}
                     【草案 SQL】: {optimized_sql}
@@ -70,6 +90,7 @@ def evaluator_node(state: AgenticState) -> dict:
 
                     请基于上述执行计划给出你的打分，并在 feedback 中说明性能提升点或严厉指出剩余的性能瓶颈！""")
     ])
+
     try:
         result: EvaluationResult = (prompt | evaluator_chain).invoke({
             "bad_sql": bad_sql,
@@ -78,29 +99,28 @@ def evaluator_node(state: AgenticState) -> dict:
         })
     except ValidationError as e:
         print(f"⚠️ Evaluator 输出格式崩坏: {e}")
-        # 如果是评委自己格式崩坏，算作打回一次，让上游重写
-        return {
-            "is_valid": True,
-            "retry_count": retry_count + 1,
-            "messages": [HumanMessage(content=f"【系统打回】审查官服务返回格式异常，本次评估作废，请重试。")]
-        }
+        return _handle_retry(
+            error_title="【系统打回】审查官服务返回格式异常，本次评估作废。",
+            detailed_msg=str(e)
+        )
     except Exception as e:
-        print(f"⚠️ Evaluator 节点服务发生未知异常: {e}")
+        error_msg = f"【阻断】审查官服务宕机，流程终止。详细信息: {e}"
         return {
             "is_valid": False,
-            "messages": [AIMessage(content=f"【阻断】审查官服务宕机，流程终止。详细信息: {e}")]
+            "block_node": "evaluator_node (评测)",
+            "block_reason": error_msg,
+            "messages": [AIMessage(content=error_msg)]
         }
-    # 判断并打回重审
+
+    # 4. 判断最终打分并打回重审
     if not result.passed:
-        feedback_msg = HumanMessage(
-            content=f"【沙箱审查未通过】打分:{result.score}。审查意见：{result.feedback}。请结合这些物理沙箱的反馈，重新修改 SQL！"
+        return _handle_retry(
+            error_title=f"【沙箱审查未通过】打分:{result.score}。",
+            detailed_msg=f"审查意见：{result.feedback}",
+            score=result.score
         )
-        return {
-            "is_valid": True,
-            "messages": [feedback_msg],
-            "review_score": result.score,
-            "retry_count": retry_count + 1
-        }
+
+    # 完全通过，正常放行
     return {
         "is_valid": True,
         "review_score": result.score,

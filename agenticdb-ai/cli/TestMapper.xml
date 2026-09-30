@@ -20,4 +20,50 @@
         WHERE last_login_time IS NULL
     </update>
 
+    <!-- ========================================== -->
+    <!-- 以下为新增的待优化 SQL (涵盖多种反模式)       -->
+    <!-- ========================================== -->
+
+    <!-- 反模式：在 WHERE 等号左侧使用函数 (DATE) 会导致索引失效 -->
+    <select id="getNotesByDate" resultType="Note">
+        SELECT id, title, content
+        FROM notes
+        WHERE DATE(created_at) = '2023-10-01'
+    </select>
+
+    <!-- 正常 JOIN：用于测试缺乏关联表索引时的优化建议 -->
+    <select id="getNotesWithUser" resultType="NoteDto">
+        SELECT n.id, n.title, u.username
+        FROM notes n
+        LEFT JOIN users u ON n.user_id = u.id
+    </select>
+
+    <!-- 严重高危：缺失 JOIN 条件引发的笛卡尔积 (全表乘积扫描) -->
+    <select id="getNotesAndNotebooks" resultType="NoteDto">
+        SELECT n.title, nb.title
+        FROM notes n, notebooks nb
+    </select>
+
+    <!-- 反模式：疑似隐式类型转换 (若 notebook_id 是 int 类型，传字符串会导致不走索引) -->
+    <select id="getNotesByNotebookId" resultType="Note">
+        SELECT id, title, content
+        FROM notes
+        WHERE notebook_id = '1024'
+    </select>
+
+    <!-- 反模式：深分页灾难 (LIMIT M, N 且 M 极大)，导致回表性能骤降 -->
+    <select id="getNotesDeepPaging" resultType="Note">
+        SELECT id, title, content
+        FROM notes
+        ORDER BY created_at DESC
+        LIMIT 500000, 20
+    </select>
+
+    <!-- 标准查询：LIKE 前缀匹配 (通常可走索引，用来测试 Agent 的“免开刀”识别能力) -->
+    <select id="getNotesByTitlePrefix" resultType="Note">
+        SELECT id, title
+        FROM notes
+        WHERE title LIKE '工作日志%'
+    </select>
+
 </mapper>

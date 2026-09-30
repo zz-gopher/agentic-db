@@ -3,10 +3,6 @@ from dotenv import load_dotenv
 
 # 1. 第一时间读取 .env 文件，激活 LangSmith
 load_dotenv()
-# 1. 禁用 Tokenizer 的底层多线程（解决 Debugger 死锁的绝对核心！）
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# 2. 强制断网离线（防止 Hugging Face 偷偷连网检测新版本导致超时）
-os.environ["HF_HUB_OFFLINE"] = "1"
 
 from graph.workflow import agent_app
 from langchain_core.messages import HumanMessage

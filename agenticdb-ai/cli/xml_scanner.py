@@ -6,7 +6,7 @@ import re
 class MyBatisScanner:
     def __init__(self, xml_path):
         self.xml_path = xml_path
-        self.target_tags = ['select', 'update', 'insert', 'delete']
+        self.target_tags = ['select']
         self.original_doctype = ""
 
     def _read_and_clean_xml(self):

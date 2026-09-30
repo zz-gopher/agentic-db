@@ -17,7 +17,7 @@ def prepare_schema_node(state: AgenticState) -> dict:
 
     tables = set()
 
-    # 尝试一：静态解析
+    # 静态解析
     try:
         # read="mysql" 指定按照 MySQL 方言解析
         for table in sqlglot.parse_one(clean_sql, read="mysql").find_all(exp.Table):
@@ -27,6 +27,8 @@ def prepare_schema_node(state: AgenticState) -> dict:
         error_msg = f"【阻断】您的 SQL 存在严重的语法缺失或格式错误，解析器拒绝执行。\n详细错误: {e}"
         return {
             "is_valid": False,  # 状态机标记，告诉框架准备熔断
+            "block_node": "Schema Prepare (表结构解析)",  # 标记责任节点
+            "block_reason": error_msg,  # 提取纯净报错用于报告
             "messages": [AIMessage(content=error_msg)]
         }
 
@@ -52,6 +54,8 @@ def prepare_schema_node(state: AgenticState) -> dict:
         error_msg = f"【阻断】物理沙箱拒绝执行：SQL 中引用的以下表在数据库中不存在 [{missing_str}]，请检查表名拼写。"
         return {
             "is_valid": False,
+            "block_node": "Schema Prepare (表结构解析)",  # 标记责任节点
+            "block_reason": error_msg,  # 提取纯净报错用于报告
             "messages": [AIMessage(content=error_msg)]
         }
     table_schema_str = "\n".join(schemas) if schemas else "未提取到表结构。"
