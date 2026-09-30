@@ -43,10 +43,9 @@ Agentic-DB 提供了一种更安全的落地思路。它不仅让 AI 重写 SQL�
 - **自动重试与熔断**：当 AI 写出的代码没通过沙箱测试时，系统会带着真实的报错信息把它打回重写。超过 3 次则触发熔断，防止死循环。
 - **极简配置**：基于 `pydantic-settings`，统一通过 `.env` 管理 API Key 和数据库连接，带类型强校验，开箱即用。
 
----
+<img width="1307" height="831" alt="QQ_1790755649857" src="https://github.com/user-attachments/assets/2c09d760-09c5-4f64-af39-22fd3750d3ba" />
 
-## 功能演示
-<img width="1352" height="855" alt="QQ_1790755471471" src="https://github.com/user-attachments/assets/c752dc8c-cef7-41a4-bc77-957c295e5c11" />
+---
 
 
 ## 🏗️ 工作流说明
