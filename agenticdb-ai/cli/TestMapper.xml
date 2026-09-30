@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.example.mapper.UserMapper">
+
+    <!-- 一个典型的 MySQL 遗留查询，包含隐式转换和特定的时间函数 -->
+    <select id="getUserByDate" resultType="User">
+        SELECT id, username, status
+        FROM sys_user
+        WHERE create_time > DATE_SUB(NOW(), INTERVAL 7 DAY)
+        AND status = '1'
+    </select>
+
+    <!-- 一个全表扫描的更新语句 -->
+    <update id="updateUserStatus">
+        UPDATE sys_user
+        SET status = '0'
+        WHERE last_login_time IS NULL
+    </update>
+
+</mapper>
