@@ -45,6 +45,10 @@ Agentic-DB 提供了一种更安全的落地思路。它不仅让 AI 重写 SQL�
 
 ---
 
+## 功能演示
+<img width="1352" height="855" alt="QQ_1790755471471" src="https://github.com/user-attachments/assets/c752dc8c-cef7-41a4-bc77-957c295e5c11" />
+
+
 ## 🏗️ 工作流说明
 
 项目底层基于 LangGraph，将整个 SQL 调优过程拆解为一个多智能体协作的工作流：
