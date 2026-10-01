@@ -68,7 +68,7 @@ def generator_node(state: AgenticState) -> dict:
         error_msg = f"【阻断】优化专家服务异常，流程终止。详细信息: {e}"
         return {
             "is_valid": False,
-            "block_node": "generator_node (优化)",  # 标记责任节点
+            "block_node": "Generator (优化)",  # 标记责任节点
             "block_reason": error_msg,  # 提取纯净报错用于报告
             "messages": [AIMessage(content=error_msg)]
         }

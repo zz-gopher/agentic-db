@@ -3,7 +3,7 @@ import concurrent.futures
 from langchain_core.messages import HumanMessage
 
 # 引入你的解析器和 Agent 图
-from cli.xml_scanner import scan_project_mappers
+from tools.xml_scanner import scan_project_mappers
 from graph.workflow import agent_app
 
 from tools.report_generator import generate_markdown_report
@@ -86,11 +86,11 @@ def run_devops_pipeline(target_dir: str, max_workers: int = 5):
 
 
 if __name__ == "__main__":
-    # 测试环境：指向 cli 目录去扫描你刚刚建好的 TestMapper.xml
+    # 测试环境：指向 examples 目录去扫描你刚刚建好的 TestMapper.xml
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    test_mapper_dir = os.path.join(current_dir, "cli")
+    test_mapper_dir = os.path.join(current_dir, "examples")
 
     # 触发整条流水线
     final_reports = run_devops_pipeline(test_mapper_dir, max_workers=3)
     if final_reports:
-        generate_markdown_report(final_reports, output_path="Migration_Audit_Report.md")
+        generate_markdown_report(final_reports)

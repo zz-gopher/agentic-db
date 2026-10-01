@@ -42,7 +42,7 @@ def evaluator_node(state: AgenticState) -> dict:
         error_msg = f"【阻断】评测沙箱未接收到优化草案，无法执行。"
         return {
             "is_valid": False,
-            "block_node": "evaluator_node (评测)",
+            "block_node": "Evaluator (评测)",
             "block_reason": error_msg,
             "messages": [AIMessage(content=error_msg)]
         }

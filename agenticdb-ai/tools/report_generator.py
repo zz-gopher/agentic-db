@@ -2,14 +2,24 @@ import datetime
 import os
 
 
-def generate_markdown_report(audit_results: list, output_path: str = "Migration_Audit_Report.md"):
+def generate_markdown_report(audit_results: list, output_path: str = None):
     """
-    根据 Agentic-DB 的批量跑批结果生成极简、专业的 Markdown 审计报告
+    根据 Agentic-DB 的批量跑批结果生成专业的 Markdown 审计报告
     """
     total_count = len(audit_results)
     if total_count == 0:
         print("没有可生成的报告数据。")
         return
+
+    now = datetime.datetime.now()
+    # 报告头部依然保留人类可读的时间格式
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 修改点：生成纯连续数字的 Unix 时间戳作为文件后缀
+    if output_path is None:
+        # 获取纯数字时间戳，例如: 1788153041
+        time_suffix = str(int(now.timestamp()))
+        output_path = f"reports/migration_audit_report_{time_suffix}.md"
 
     # 分类统计
     success_results = [r for r in audit_results if r.get('is_valid') and r.get('score', 0) >= 70]
@@ -17,8 +27,6 @@ def generate_markdown_report(audit_results: list, output_path: str = "Migration_
 
     success_count = len(success_results)
     failed_count = len(failed_results)
-
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # 1. 组装报告头部
     md_lines = [
@@ -47,11 +55,11 @@ def generate_markdown_report(audit_results: list, output_path: str = "Migration_
     else:
         md_lines.append("> 🎉 完美运行，未发现任何高危拦截。")
 
-    md_lines.extend(["\n---", "## ✅ 核心优化成果展示 (部分抽样)\n"])
+    md_lines.extend(["\n---", "## ✅ 核心优化成果展示\n"])
 
-    # 3. 抽样展示成功的 SQL (最多展示前 3 个，避免报告过长)
+    # 3. 展示所有成功的 SQL
     if success_results:
-        for s in success_results[:3]:
+        for s in success_results:
             file_name = os.path.basename(s.get('file_path', 'Unknown'))
             md_lines.append(f"### 🎯 [{file_name} -> {s.get('sql_id')}]")
             md_lines.append(f"**沙箱验证得分**: `{s.get('score')}`")
@@ -62,6 +70,9 @@ def generate_markdown_report(audit_results: list, output_path: str = "Migration_
             md_lines.append("---")
     else:
         md_lines.append("> 暂无成功优化的案例。")
+
+    # 在写入前自动创建目标文件夹
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     # 写入文件
     final_md = "\n".join(md_lines)

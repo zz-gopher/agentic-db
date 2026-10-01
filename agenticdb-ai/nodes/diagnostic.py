@@ -43,7 +43,7 @@ def diagnostic_node(state: AgenticState) -> dict:
         error_msg = f"【阻断】诊断专家服务异常，流程终止。详细信息: {e}"
         return {
             "is_valid": False,
-            "block_node": "diagnostic_node (诊断)",  # 标记责任节点
+            "block_node": "Diagnostic (诊断)",  # 标记责任节点
             "block_reason": error_msg,  # 提取纯净报错用于报告
             "messages": [AIMessage(content=error_msg)]
         }

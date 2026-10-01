@@ -66,7 +66,7 @@ def scan_project_mappers(directory_path):
 
 
 if __name__ == "__main__":
-    # 测试：扫描当前 cli 目录（或者你可以传入你本地的真实的 Mapper 文件夹路径）
+    # 测试：扫描当前 examples 目录（或者你可以传入你本地的真实的 Mapper 文件夹路径）
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
     print(f"🚀 开始全局扫描目录: {current_dir}\n" + "=" * 40)
