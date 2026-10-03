@@ -1,82 +1,108 @@
-import xml.etree.ElementTree as ET
 import os
-import re
+import json
+import subprocess
+import shutil
 
 
-class MyBatisScanner:
-    def __init__(self, xml_path):
-        self.xml_path = xml_path
-        self.target_tags = ['select']
-        self.original_doctype = ""
+def _get_java_command():
+    """
+    环境探针：智能寻找系统中的 Java 命令
+    """
+    # 1. 优先读取系统环境变量中的 JAVA_HOME
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        java_cmd = os.path.join(java_home, "bin", "java")
+        if os.path.exists(java_cmd) or os.path.exists(java_cmd + ".exe"):
+            return java_cmd
 
-    def _read_and_clean_xml(self):
-        with open(self.xml_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    # 2. 回退到全局 path 中寻找
+    if shutil.which("java"):
+        return "java"
 
-        match = re.search(r'<!DOCTYPE[^>]+>', content)
-        if match:
-            self.original_doctype = match.group(0)
-            content = content.replace(self.original_doctype, '')
-
-        return content
-
-    def extract_sqls(self):
-        clean_xml_content = self._read_and_clean_xml()
-
-        try:
-            self.tree = ET.ElementTree(ET.fromstring(clean_xml_content))
-            root = self.tree.getroot()
-        except ET.ParseError as e:
-            print(f"❌ [{os.path.basename(self.xml_path)}] XML 解析失败: {e}")
-            return []
-
-        extracted_sqls = []
-        for tag in self.target_tags:
-            for node in root.iter(tag):
-                sql_id = node.get('id')
-                sql_text = node.text.strip() if node.text else ""
-
-                if sql_text:
-                    extracted_sqls.append({
-                        "file_path": self.xml_path,  # 记录来源文件，为回写和报告做准备
-                        "id": sql_id,
-                        "type": tag,
-                        "original_sql": sql_text
-                    })
-
-        return extracted_sqls
+    raise EnvironmentError(
+        "❌ 致命错误：系统中未找到 Java 环境。\n"
+        "解决方案：请安装 JDK (推荐 11 及以上) 并配置环境变量，或者在运行前设置 JAVA_HOME。"
+    )
 
 
-def scan_project_mappers(directory_path):
-    """递归扫描目录下的所有 XML 文件"""
-    all_extracted_sqls = []
-    xml_count = 0
+def _ensure_parser_jar(project_root: str, jar_path: str):
+    """
+    自愈机制：如果找不到 jar 包，尝试自动调用 Maven 构建
+    """
+    if os.path.exists(jar_path):
+        return
 
-    for root, dirs, files in os.walk(directory_path):
-        for file in files:
-            if file.endswith('.xml'):
-                xml_count += 1
-                full_path = os.path.join(root, file)
-                scanner = MyBatisScanner(full_path)
-                sqls = scanner.extract_sqls()
-                all_extracted_sqls.extend(sqls)
+    print("⚠️ 未检测到已编译的 Java 解析器 (jar包)。")
 
-    print(f"📂 共扫描 {xml_count} 个 XML 文件，提取到 {len(all_extracted_sqls)} 条待迁移 SQL。")
-    return all_extracted_sqls
+    if not shutil.which("mvn"):
+        raise EnvironmentError(
+            "❌ 致命错误：缺失 jar 包且系统中未找到 Maven (mvn)，无法自动构建。\n"
+            "解决方案：请进入 agenticdb-parser 目录手动执行编译，或安装 Maven。"
+        )
+
+    print("⏳ 正在自动调用 Maven 构建底座，请稍候...")
+    parser_dir = os.path.join(project_root, "agenticdb-parser")
+    try:
+        subprocess.run(
+            ["mvn", "clean", "package", "-DskipTests"],
+            cwd=parser_dir,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        print("✅ Java 解析器自动构建成功！\n")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"❌ 自动构建失败，请检查 Java 代码或 Maven 配置。错误信息:\n{e.stderr}")
 
 
-if __name__ == "__main__":
-    # 测试：扫描当前 examples 目录（或者你可以传入你本地的真实的 Mapper 文件夹路径）
+def scan_project_mappers(target_dir: str):
+    """
+    遍历目录下的所有 XML 文件，并调用底层 Java 解析器提取纯净 SQL。
+    任何人拉取代码后，均可无痛运行。
+    """
+    extracted_sqls = []
+
+    # 1. 绝对路径推导 (兼容所有操作系统的路径分隔符)
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    ai_dir = os.path.dirname(current_dir)
+    project_root = os.path.dirname(ai_dir)
 
-    print(f"🚀 开始全局扫描目录: {current_dir}\n" + "=" * 40)
+    jar_path = os.path.join(project_root, "agenticdb-parser", "target", "agenticdb-parser-1.0-SNAPSHOT.jar")
 
-    # 提取全局 SQL
-    global_sqls = scan_project_mappers(current_dir)
+    # 2. 检查并准备运行环境
+    java_cmd = _get_java_command()
+    _ensure_parser_jar(project_root, jar_path)
 
-    # 打印前 3 条作为验证，避免控制台刷屏
-    for i, item in enumerate(global_sqls[:3]):
-        filename = os.path.basename(item['file_path'])
-        print(f"🎯 [{filename}] -> [{item['type'].upper()}] {item['id']}")
-        print(f"📜 {item['original_sql']}")
-        print("-" * 40)
+    for root, _, files in os.walk(target_dir):
+        for file in files:
+            if file.endswith(".xml"):
+                file_path = os.path.join(root, file)
+
+                try:
+                    # 3. 使用推导出的跨平台命令和绝对路径执行
+                    result = subprocess.run(
+                        [java_cmd, "-jar", jar_path, file_path],
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
+
+                    parsed_data = json.loads(result.stdout)
+
+                    for item in parsed_data:
+                        sql_type = "select" if item['sql'].strip().upper().startswith("SELECT") else "update"
+                        clean_sql = item['sql'].replace('\u003d', '=').replace('\u003e', '>').replace('\u003c', '<')
+
+                        extracted_sqls.append({
+                            "file_path": file_path,
+                            "id": item["id"],
+                            "original_sql": clean_sql,
+                            "type": sql_type
+                        })
+
+                except subprocess.CalledProcessError as e:
+                    print(f"❌ 解析失败 [{file}]: 底层抛出异常或语法不规范。")
+                except json.JSONDecodeError:
+                    print(f"❌ 解析失败 [{file}]: Java 引擎返回了非法的 JSON 格式。")
+
+    return extracted_sqls

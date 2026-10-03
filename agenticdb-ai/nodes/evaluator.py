@@ -124,5 +124,6 @@ def evaluator_node(state: AgenticState) -> dict:
     return {
         "is_valid": True,
         "review_score": result.score,
-        "retry_count": retry_count
+        "retry_count": retry_count,
+        "feedback": result.feedback
     }

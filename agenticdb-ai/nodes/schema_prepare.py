@@ -37,7 +37,7 @@ def prepare_schema_node(state: AgenticState) -> dict:
     missing_tables = []
     for table_name in tables:
         try:
-            schema_result = get_table_schema.invoke(table_name)
+            schema_result = get_table_schema(table_name)
             # 判断物理探针是否返回了警告或失败
             if not schema_result.get("success", False):
                 error_detail = schema_result.get("msg", "未知错误")

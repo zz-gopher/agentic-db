@@ -66,7 +66,12 @@ def generate_markdown_report(audit_results: list, output_path: str = None):
             md_lines.append("**[原版 SQL]**:")
             md_lines.append("```sql\n" + str(s.get('original_sql')).strip() + "\n```")
             md_lines.append("**[Agentic-DB 优化版]**:")
-            md_lines.append("```sql\n" + str(s.get('optimized_sql')).strip() + "\n```\n")
+            md_lines.append("```sql\n" + str(s.get('optimized_sql')).strip() + "\n```")
+            feedback = s.get('feedback', '经过沙箱与大模型联合评估，原 SQL 逻辑已达标或优化方案已验证通过。')
+            # 替换换行符以确保在 Markdown 引用块中渲染正常
+            clean_feedback = str(feedback).replace('\n', '\n> ')
+            md_lines.append(f"> **💡 优化/诊断建议**:\n> {clean_feedback}\n")
+
             md_lines.append("---")
     else:
         md_lines.append("> 暂无成功优化的案例。")

@@ -37,7 +37,8 @@ def _process_single_sql(item: dict) -> dict:
         "score": score,
         "is_valid": is_valid,
         "block_node": final_state.get("block_node"),
-        "block_reason": final_state.get("block_reason")
+        "block_reason": final_state.get("block_reason"),
+        "feedback": final_state.get("feedback")
     }
 
 

@@ -1,11 +1,9 @@
 from core.config import settings
-from langchain_core.tools import tool
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 schema_engine = create_engine(settings.db_uri, pool_pre_ping=True)
 
-@tool
 def get_table_schema(table_name: str) -> dict:
     """当需要了解某张数据库表的真实结构、字段类型或索引情况时，调用此工具获取 DDL 语句。"""
     print(f"⚙️ [物理探针] 正在前往真实数据库抓取表结构: {table_name}")

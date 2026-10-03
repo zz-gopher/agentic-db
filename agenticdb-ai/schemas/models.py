@@ -14,7 +14,6 @@ class SqlOptimizationDraft(BaseModel):
         default_factory=list,
         description="【极其严格】只能包含合法的 ALTER TABLE 或 CREATE INDEX 语句，绝不允许包含任何注释文本或说明性文字。若无则为空。"
     )
-
 class EvaluationResult(BaseModel):
     score: int = Field(description="打分结果，满分100")
     passed: bool = Field(description="是否通过审查")

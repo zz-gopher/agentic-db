@@ -17,3 +17,4 @@ class AgenticState(TypedDict):
     # 用于 DevOps 报告的标准化熔断信息
     block_node: Optional[str]
     block_reason: Optional[str]
+    feedback: Optional[str]

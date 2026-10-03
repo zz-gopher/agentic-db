@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.agenticdb.mapper.MapperTagParsingTestMapper">
+
+    <!-- 1. 测试基础代码块 <sql> 和 <include> 的递归替换 -->
+    <sql id="Base_Note_Columns">
+        id, title, content, created_at, updated_at, notebook_id, user_id
+    </sql>
+
+    <!-- 2. 测试 <where> 去除前导 AND，<if> 条件合并，以及 CDATA 转义符 -->
+    <select id="getNotesByCondition" resultType="map">
+        SELECT <include refid="Base_Note_Columns"/>
+        FROM notes
+        <where>
+            <if test="title != null and title != ''">
+                AND title = #{title}
+            </if>
+            <if test="userId != null">
+                AND user_id = #{userId}
+            </if>
+            <if test="startTime != null">
+                <![CDATA[ AND created_at >= #{startTime} ]]>
+            </if>
+        </where>
+    </select>
+
+    <!-- 3. 测试 <choose> 分支互斥逻辑，以及 <bind> 变量绑定 -->
+    <select id="searchUsers" resultType="map">
+        <bind name="pattern" value="'%' + keyword + '%'" />
+        SELECT id, username, status, create_time
+        FROM users
+        WHERE 1=1
+        <choose>
+            <when test="searchType == 'username'">
+                AND username LIKE #{pattern}
+            </when>
+            <when test="searchType == 'status'">
+                AND status = #{status}
+            </when>
+            <otherwise>
+                AND status = '1'
+            </otherwise>
+        </choose>
+    </select>
+
+
+
+    <!-- 5. 测试最复杂的 <trim> 自定义修剪，以及 <foreach> 集合展开 -->
+    <select id="getNotesByUserIds" resultType="map">
+        SELECT <include refid="Base_Note_Columns"/>
+        FROM notes
+        <trim prefix="WHERE" prefixOverrides="AND |OR ">
+            <if test="userIds != null and userIds.size() > 0">
+                AND user_id IN
+                <foreach item="item" index="index" collection="userIds" open="(" separator="," close=")">
+                    #{item}
+                </foreach>
+            </if>
+        </trim>
+    </select>
+
+</mapper>
