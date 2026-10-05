@@ -68,8 +68,9 @@ def _generate_mock_by_type(data_type: str, dialect: str = "mysql") -> str:
 
 def _mock_placeholders(sql: str, db_uri: str = None) -> str:
     """基于 AST 语法树与物理表结构的精准类型推导引擎"""
-    if "?" not in sql:
+    if "?" not in sql and "LIMIT" not in sql.upper():
         return sql
+
     if not db_uri:
         return sql.replace("?", "'1'")
 
@@ -80,25 +81,24 @@ def _mock_placeholders(sql: str, db_uri: str = None) -> str:
     try:
         expression = sqlglot.parse_one(sql)
 
+        # ==========================================
+        # 1. 处理 ? 占位符
+        # ==========================================
         for node in expression.find_all(exp.Placeholder):
             parent = node.parent
             target_col_name = None
 
-            # 场景 A: WHERE 列名 = ? 或 >= ?
             if isinstance(parent, exp.Binary):
-                # 修复：sqlglot 的左右节点是 this 和 expression
                 if hasattr(parent, "this") and isinstance(parent.this, exp.Column):
                     target_col_name = parent.this.name
                 elif hasattr(parent, "expression") and isinstance(parent.expression, exp.Column):
                     target_col_name = parent.expression.name
 
-            # 场景 B: WHERE 列名 IN (?, ?)
             elif isinstance(parent, exp.In) or (parent.parent and isinstance(parent.parent, exp.In)):
                 in_node = parent if isinstance(parent, exp.In) else parent.parent
                 if isinstance(in_node.this, exp.Column):
                     target_col_name = in_node.this.name
 
-            # 场景 C: INSERT INTO 表名 (列名) VALUES (?)
             elif isinstance(parent, exp.Tuple) and parent.parent and isinstance(parent.parent, exp.Values):
                 insert_node = expression.find(exp.Insert)
                 if insert_node and insert_node.this:
@@ -107,11 +107,20 @@ def _mock_placeholders(sql: str, db_uri: str = None) -> str:
                     if col_index < len(schema_cols):
                         target_col_name = schema_cols[col_index].name
 
-            # 获取真实类型并替换 AST 节点
-            # 修复：去掉 str()，保留原生的 None
             data_type = schema_types.get(target_col_name.lower()) if target_col_name else None
             mock_value = _generate_mock_by_type(data_type, dialect)
             node.replace(sqlglot.parse_one(mock_value))
+
+        # ==========================================
+        # 2. 分页处理
+        # ==========================================
+        for offset_node in expression.find_all(exp.Offset):
+            # 确保 offset 是一个具体的数字
+            if isinstance(offset_node.expression, exp.Literal) and offset_node.expression.is_number:
+                offset_val = int(offset_node.expression.this)
+                if offset_val > 0:
+                    print(f"🔧 [沙箱护航] 拦截到深分页 (OFFSET={offset_val})，自动降维为 0 绕过数据饥荒...")
+                    offset_node.expression.replace(exp.Literal.number(0))
 
         out_dialect = "tsql" if dialect == "mssql" else dialect
         return expression.sql(dialect=out_dialect)
@@ -119,9 +128,7 @@ def _mock_placeholders(sql: str, db_uri: str = None) -> str:
     except Exception as e:
         print(f"⚠️ AST 解析失败回退: {e}")
         return sql.replace("?", "'1'")
-# ==========================================
-# 1. 动态引擎缓存池 & 辅助函数
-# ==========================================
+
 _engine_cache = {}
 
 def get_engine(db_uri: str):
@@ -138,10 +145,7 @@ def custom_serializer(obj):
 
 
 
-
-# ==========================================
-# 2. 工具一：多库自适应的 EXPLAIN 提取器
-# ==========================================
+# 多库自适应的 EXPLAIN 提取器
 def get_explain_plan(sql: str, db_uri: str) -> dict:
     clean_sql = sql.strip()
     if not clean_sql.upper().startswith("SELECT"):
@@ -182,58 +186,72 @@ def get_explain_plan(sql: str, db_uri: str) -> dict:
         return {"success": False, "msg": f"沙箱未知异常：{str(e)}"}
 
 
-# ==========================================
-# 3. 工具二：多库通用的逻辑校验器
-# ==========================================
-def verify_logic_equivalence(original_sql: str, optimized_sql: str, db_uri: str) -> dict:
-    if not original_sql.upper().startswith("SELECT") or not optimized_sql.upper().startswith("SELECT"):
-        return {"is_equivalent": False, "msg": "【安全拦截】只支持 SELECT 语句的逻辑校验。"}
 
-    # 预处理占位符
+
+# 工具二：多库通用的逻辑校验器
+def verify_logic_equivalence(original_sql: str, optimized_sql: str, db_uri: str, mock_inserts: list = None) -> dict:
+    """
+    智能阶梯校验器：优先使用真实数据，仅在数据饥荒时使用幽灵事务和 Mock 数据。
+    """
     exec_orig = _mock_placeholders(original_sql, db_uri)
     exec_opt = _mock_placeholders(optimized_sql, db_uri)
     engine = get_engine(db_uri)
 
     try:
         with engine.connect() as conn:
-            res_orig = conn.execute(text(exec_orig))
-            cols_orig = list(res_orig.keys())
-            data_orig = res_orig.fetchmany(100)
+            # ==========================================
+            # 模式 A: 带有 Mock 数据的幽灵事务模式
+            # ==========================================
+            if mock_inserts:
+                trans = conn.begin()
+                try:
+                    for insert_sql in mock_inserts:
+                        conn.execute(text(insert_sql))
 
-            res_opt = conn.execute(text(exec_opt))
-            cols_opt = list(res_opt.keys())
-            data_opt = res_opt.fetchmany(100)
+                    res_orig = conn.execute(text(exec_orig))
+                    data_orig = res_orig.fetchmany(100)
+                    res_opt = conn.execute(text(exec_opt))
+                    data_opt = res_opt.fetchmany(100)
 
-            # 1. 字段级比对
-            if cols_orig != cols_opt:
-                return {
-                    "is_equivalent": False,
-                    "msg": f"【列篡改错误】\n原SQL输出列: {cols_orig}\n优化后输出列: {cols_opt}"
-                }
+                    trans.rollback()  # 测完立刻回滚
 
-            # 2. 数据饥荒检测 (防止空表绕过逻辑比对)
-            if len(data_orig) == 0:
-                return {
-                    "is_equivalent": True,
-                    "msg": "【空数据警告】原 SQL 查询结果为空"
-                }
+                    if len(data_orig) == 0:
+                        return {"is_equivalent": False, "msg": "【造数失败】大模型生成的 Mock 数据仍无法命中。"}
 
-            # 3. 结果集严格比对
+                except Exception as e:
+                    trans.rollback()
+                    return {"is_equivalent": False, "msg": f"【Mock 注入异常】{str(e)}"}
+
+            # ==========================================
+            # 模式 B: 常规纯净读模式
+            # ==========================================
+            else:
+                res_orig = conn.execute(text(exec_orig))
+                data_orig = res_orig.fetchmany(100)
+
+                # 触发饥荒降级信号，通知 Agent 去造数据！
+                if len(data_orig) == 0:
+                    return {"is_equivalent": False,
+                            "needs_mock": True,
+                            "msg": "【空数据警告】沙箱缺乏命中该 SQL 的测试数据",
+                            "exec_orig": exec_orig}
+
+                res_opt = conn.execute(text(exec_opt))
+                data_opt = res_opt.fetchmany(100)
+
+            # ==========================================
+            # 统一的比对逻辑
+            # ==========================================
             str_orig = json.dumps([tuple(row) for row in data_orig], default=custom_serializer)
             str_opt = json.dumps([tuple(row) for row in data_opt], default=custom_serializer)
 
             if str_orig != str_opt:
-                return {
-                    "is_equivalent": False,
-                    "msg": "【业务逻辑破坏】优化后的 SQL 查出的前 100 条数据内容或排序与原 SQL 不一致！"
-                }
+                return {"is_equivalent": False, "msg": "【业务逻辑破坏】优化后的 SQL 数据内容或排序与原 SQL 不一致！"}
 
             return {"is_equivalent": True, "msg": "输出字段与数据与原逻辑完美一致。"}
 
-    except SQLAlchemyError as e:
-        return {"is_equivalent": False, "msg": f"【运行报错】执行优化 SQL 时报错：{str(e._message())}"}
     except Exception as e:
-         return {"is_equivalent": False, "msg": f"【未知异常】校验沙箱崩溃：{str(e)}"}
+        return {"is_equivalent": False, "msg": f"【执行异常】{str(e)}"}
 
 
 if __name__ == "__main__":

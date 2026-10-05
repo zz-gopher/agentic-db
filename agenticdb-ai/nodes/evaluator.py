@@ -49,25 +49,39 @@ def evaluator_node(state: AgenticState) -> dict:
 
     optimized_sql = draft.optimized_sql.replace("```sql", "").replace("```", "").strip(" \n\r\t;")
     print("⚙️ [物理沙箱] 正在运行 EXPLAIN 并校验数据一致性...")
-
     # 1. 物理执行校验
     explain_result = get_explain_plan(optimized_sql, settings.db_uri)
     if not explain_result.get("success", False):
         print(f"🚫 触发物理一票否决！引擎报错信息: {explain_result.get('msg')}")
         return _handle_retry(
             error_title="【致命错误】优化草案在物理沙箱中直接执行失败（语法错误或字段不明）！",
-            detailed_msg=explain_result.get('msg')
+            detailed_msg=str(explain_result.get('msg'))
         )
 
     # 2. 逻辑等价校验
-    logic_result = verify_logic_equivalence(bad_sql, optimized_sql, settings.db_uri)
+    mock_inserts = state.get("mock_inserts", [])
+    logic_result = verify_logic_equivalence(bad_sql, optimized_sql, settings.db_uri, mock_inserts)
+    if logic_result.get("needs_mock", False):
+        if retry_count >= 2:
+            print("🚫 触发沙箱护栏：mock 造数陷入死循环。")
+            return _handle_retry(
+                error_title="【致命错误：造数死循环】",
+                detailed_msg="已连续多次唤醒大模型生成 Mock 数据，但依然无法命中原 SQL 的 WHERE 条件。为保护计算资源，强制终止流水线。"
+            )
+        print(f"⚠️ 物理沙箱报告数据饥荒 (已耗用重试次数: {retry_count})，准备唤醒大模型造数...")
+        return {
+            "is_valid": True,
+            "needs_mock": True,
+            # 将替换了真实参数的 SQL 丢给下一个节点
+            "executable_sql": logic_result.get("exec_orig"),
+            "retry_count": retry_count + 1
+        }
     if not logic_result.get("is_equivalent", False):
         print("🚫 触发物理一票否决！逻辑校验未通过，直接打回重审。")
         return _handle_retry(
             error_title="【物理沙箱执行失败】您的优化草案改变了原有的业务逻辑！",
-            detailed_msg=logic_result.get('msg')
+            detailed_msg=str(logic_result.get('msg'))
         )
-
     # 3. LLM 审查打分
     evaluator_chain = llm.with_structured_output(EvaluationResult, method="function_calling")
     prompt = ChatPromptTemplate.from_messages([

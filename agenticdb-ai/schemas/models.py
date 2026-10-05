@@ -30,3 +30,9 @@ class DiagnosticResult(BaseModel):
 class TableExtraction(BaseModel):
     # 它会自动输出一个包含多个元素的列表，例如：["users", "orders", "products"]
     tables: list[str] = Field(description="SQL中涉及的所有表名列表")
+
+class MockDataResult(BaseModel):
+    inserts: List[str] = Field(
+        description="基于原 SQL 条件逆向推导出的 INSERT INTO 语句列表。绝对不允许超过5条。",
+        max_length=5
+    )

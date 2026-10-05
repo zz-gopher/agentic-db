@@ -7,6 +7,7 @@ from nodes.diagnostic import diagnostic_node
 from nodes.generator import generator_node
 from nodes.evaluator import evaluator_node
 from nodes.memory import memory_node
+from nodes.mockdata import mockdata_node
 
 # 2. 初始化图状态
 workflow = StateGraph(AgenticState)
@@ -17,6 +18,7 @@ workflow.add_node("diagnostic_node", diagnostic_node)
 workflow.add_node("generator", generator_node)
 workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("memory_node", memory_node)
+workflow.add_node("mockdata_node", mockdata_node)
 def check_valid_and_route(next_node: str):
     def router(state: AgenticState) -> str:
         if state.get("is_valid", True) == False:
@@ -27,6 +29,10 @@ def check_valid_and_route(next_node: str):
 def route_after_evaluation(state: AgenticState) -> str:
     if state.get("is_valid", True) == False:
         return END
+    if state.get("needs_mock", False) and not state.get("mock_inserts"):
+        print("👻 触发幽灵防线：启动 PhantomSeeder 尝试逆向注入数据...")
+        return "mockdata_node"
+
     if state.get("review_score", 0) >= 70:
         return "memory_node"
     else:
@@ -38,6 +44,7 @@ workflow.add_conditional_edges("prepare_schema", check_valid_and_route("diagnost
 workflow.add_conditional_edges("diagnostic_node", check_valid_and_route("generator"))
 workflow.add_conditional_edges("generator", check_valid_and_route("evaluator"))
 workflow.add_conditional_edges("evaluator", route_after_evaluation)
+workflow.add_edge("mockdata_node", "evaluator")
 workflow.add_edge("memory_node", END)
 
 # 6. 编译输出
