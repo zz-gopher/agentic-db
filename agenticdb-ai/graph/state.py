@@ -6,6 +6,7 @@ from schemas.models import SqlOptimizationDraft
 class AgenticState(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     bad_sql: str # 待优化SQL
+    db_uri: str # 数据库连接地址
     db_engine: str # 数据库引擎
     suspected_diagnoses: list[str] # 用于存放 LLM 对这句 SQL 的初步病理诊断和疑似标签
     examples: str # LLM参考经验

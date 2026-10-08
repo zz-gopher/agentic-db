@@ -1,11 +1,16 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import os
+import uvicorn
+import shutil
+import zipfile
+import tempfile
+import subprocess
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional
-import uvicorn
-
-# 导入你写好的 LangGraph 引擎和状态定义
 from graph.workflow import agent_app as agentic_graph
-from graph.state import AgenticState
+from run_pipeline import run_devops_pipeline
+from tools.report_generator import generate_markdown_report
 
 app = FastAPI(title="Agentic-DB SQL Optimizer API", version="1.0.0")
 
@@ -54,6 +59,82 @@ async def audit_single_sql(request: SQLAuditRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"审计流水线异常: {str(e)}")
 
+
+@app.post("/api/v1/audit-project")
+def audit_project_cloud(
+        # 核心沙箱参数
+        db_uri: str = Form(...,
+                           description="沙箱数据库连接串 (例如: mysql+pymysql://root:root@127.0.0.1:3306/ai_note)"),
+
+        # 源码获取方式 (Git 或 ZIP，二选一)
+        git_url: Optional[str] = Form(None, description="Git 仓库地址 (如 https://github.com/xxx.git)"),
+        git_branch: Optional[str] = Form("main", description="Git 分支名"),
+        file: Optional[UploadFile] = File(None, description="Spring项目的 .zip 压缩包"),
+        max_workers: int = Form(3, description="并发执行的线程数")
+):
+    """
+    云端项目级扫描与审计闭环：
+    获取源码 (Git/ZIP) -> 扫描提取 SQL -> 送入沙箱 Agent -> 直接返回结果与 Markdown 报告文本
+    """
+    if not git_url and not file:
+        raise HTTPException(status_code=400, detail="必须提供 git_url 或上传 .zip 文件")
+
+    # 使用临时目录，请求结束自动销毁物理文件，防止磁盘溢出
+    with tempfile.TemporaryDirectory() as temp_dir:
+        target_scan_dir = os.path.join(temp_dir, "source_code")
+
+        try:
+            # 1. 源码落地机制
+            if git_url:
+                print(f"📦 正在从 {git_url} (分支: {git_branch}) 拉取代码...")
+                subprocess.run(
+                    ["git", "clone", "-b", git_branch, "--single-branch", git_url, target_scan_dir],
+                    check=True, capture_output=True, text=True
+                )
+            elif file:
+                if not file.filename.endswith('.zip'):
+                    raise HTTPException(status_code=400, detail="必须上传 .zip 压缩包")
+                zip_path = os.path.join(temp_dir, file.filename)
+                with open(zip_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(target_scan_dir)
+
+            # 2. 触发核心并发流水线，传入目标目录与沙箱连接串
+            print(f"🚀 启动沙箱打分流水线，目标库: {db_uri}")
+            audit_results = run_devops_pipeline(target_scan_dir, db_uri, max_workers)
+
+            if not audit_results:
+                return {
+                    "status": "success",
+                    "total_scanned": 0,
+                    "message": "未在项目中扫描到任何 MyBatis XML 语句"
+                }
+
+            report_path = generate_markdown_report(audit_results)
+
+            report_content = ""
+            if report_path and os.path.exists(report_path):
+                with open(report_path, "r", encoding="utf-8") as f:
+                    report_content = f.read()
+
+            if not report_content:
+                return {"message": "报告生成失败"}
+
+            return Response(
+                content=report_content,
+                media_type="text/markdown",
+                headers={
+                    "Content-Disposition": f'attachment; filename="Agentic_SQL_Audit_Report.md"'
+                }
+            )
+
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"Git 拉取失败: {e.stderr}")
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="压缩包损坏，无法解压")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"流水线执行异常: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

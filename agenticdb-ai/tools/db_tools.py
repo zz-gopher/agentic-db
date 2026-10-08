@@ -1,20 +1,18 @@
 from core.config import settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+from tools.sandbox_tools import get_engine
 
-schema_engine = create_engine(settings.db_uri, pool_pre_ping=True)
-
-def get_table_schema(table_name: str) -> dict:
+def get_table_schema(table_name: str, db_uri: str) -> dict:
     """当需要了解某张数据库表的真实结构、字段类型或索引情况时，调用此工具获取 DDL 语句。"""
     print(f"⚙️ [物理探针] 正在前往真实数据库抓取表结构: {table_name}")
 
     clean_table = table_name.strip(" `'\"")
-
     if not clean_table:
         return {"success": False, "msg": "传入的表名为空。"}
-
+    engine = get_engine(db_uri)
     try:
-        with schema_engine.connect() as conn:
+        with engine.connect() as conn:
             sql = f"SHOW CREATE TABLE `{clean_table}`"
             result = conn.execute(text(sql))
             row = result.fetchone()

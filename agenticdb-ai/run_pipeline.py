@@ -8,7 +8,7 @@ from graph.workflow import agent_app
 
 from tools.report_generator import generate_markdown_report
 
-def _process_single_sql(item: dict) -> dict:
+def _process_single_sql(item: dict, db_uri: str) -> dict:
     """内部工作函数：将单条 SQL 送入 Agent 物理沙箱流转"""
     sql_id = item['id']
     raw_sql = item['original_sql']
@@ -16,6 +16,7 @@ def _process_single_sql(item: dict) -> dict:
     # 组装 LangGraph 需要的初始状态
     initial_state = {
         "bad_sql": raw_sql,
+        "db_uri":db_uri,
         "messages": [HumanMessage(content=f"请优化:  {raw_sql}")]
     }
 
@@ -42,7 +43,7 @@ def _process_single_sql(item: dict) -> dict:
     }
 
 
-def run_devops_pipeline(target_dir: str, max_workers: int = 5):
+def run_devops_pipeline(target_dir: str, db_uri, max_workers: int = 5):
     """
     正式的并发流水线入口
     """
@@ -61,7 +62,7 @@ def run_devops_pipeline(target_dir: str, max_workers: int = 5):
 
     # 2. 线程池并发调用 Agent
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_sql = {executor.submit(_process_single_sql, item): item for item in extracted_sqls}
+        future_to_sql = {executor.submit(_process_single_sql, item, db_uri): item for item in extracted_sqls}
 
         completed_count = 0
         for future in concurrent.futures.as_completed(future_to_sql):
@@ -92,6 +93,6 @@ if __name__ == "__main__":
     test_mapper_dir = os.path.join(current_dir, "examples")
 
     # 触发整条流水线
-    final_reports = run_devops_pipeline(test_mapper_dir, max_workers=3)
+    final_reports = run_devops_pipeline(test_mapper_dir, "mysql+pymysql://root:root@127.0.0.1:3306/ai_note", max_workers=3)
     if final_reports:
         generate_markdown_report(final_reports)

@@ -104,5 +104,7 @@ def scan_project_mappers(target_dir: str):
                     print(f"❌ 解析失败 [{file}]: 底层抛出异常或语法不规范。")
                 except json.JSONDecodeError:
                     print(f"❌ 解析失败 [{file}]: Java 引擎返回了非法的 JSON 格式。")
+                except KeyError as e:
+                    print(f"❌ 解析失败 [{file}]: Java 引擎返回的 JSON 缺少必要字段 {e}。")
 
     return extracted_sqls

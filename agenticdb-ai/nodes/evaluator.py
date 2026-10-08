@@ -12,6 +12,7 @@ from tools.sandbox_tools import get_explain_plan, verify_logic_equivalence
 
 def evaluator_node(state: AgenticState) -> dict:
     bad_sql = state.get("bad_sql", "")
+    db_uri = state.get("db_uri")
     draft = state.get("final_draft")
     retry_count = state.get("retry_count", 0)
 
@@ -50,7 +51,7 @@ def evaluator_node(state: AgenticState) -> dict:
     optimized_sql = draft.optimized_sql.replace("```sql", "").replace("```", "").strip(" \n\r\t;")
     print("⚙️ [物理沙箱] 正在运行 EXPLAIN 并校验数据一致性...")
     # 1. 物理执行校验
-    explain_result = get_explain_plan(optimized_sql, settings.db_uri)
+    explain_result = get_explain_plan(optimized_sql, db_uri)
     if not explain_result.get("success", False):
         print(f"🚫 触发物理一票否决！引擎报错信息: {explain_result.get('msg')}")
         return _handle_retry(
@@ -60,7 +61,7 @@ def evaluator_node(state: AgenticState) -> dict:
 
     # 2. 逻辑等价校验
     mock_inserts = state.get("mock_inserts", [])
-    logic_result = verify_logic_equivalence(bad_sql, optimized_sql, settings.db_uri, mock_inserts)
+    logic_result = verify_logic_equivalence(bad_sql, optimized_sql, db_uri, mock_inserts)
     if logic_result.get("needs_mock", False):
         if retry_count >= 2:
             print("🚫 触发沙箱护栏：mock 造数陷入死循环。")
