@@ -85,3 +85,4 @@ def generate_markdown_report(audit_results: list, output_path: str = None):
         f.write(final_md)
 
     print(f"\n📊 审计报告已生成: {os.path.abspath(output_path)}")
+    return os.path.abspath(output_path)
