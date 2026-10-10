@@ -2,11 +2,11 @@ from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import ValidationError
 
-from core.config import llm
+from config.config import llm
 from schemas.models import SqlOptimizationDraft
-from graph.state import AgenticState
+from graph.sql_state import SQLState
 
-def generator_node(state: AgenticState) -> dict:
+def generator_node(state: SQLState) -> dict:
     bad_sql = state.get("bad_sql", "")
     table_schema = state.get("table_schema", "暂无表结构")
     # 如果核心参数缺失，或者表结构未能成功提取（比如上游传过来的是默认错误提示），直接熔断

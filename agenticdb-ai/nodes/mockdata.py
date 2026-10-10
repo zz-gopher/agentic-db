@@ -2,12 +2,12 @@ from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import ValidationError
 
-from core.config import llm
-from graph.state import AgenticState
+from config.config import llm
+from graph.sql_state import SQLState
 from schemas.models import MockDataResult
 
 
-def mockdata_node(state: AgenticState) -> dict:
+def mockdata_node(state: SQLState) -> dict:
     """
     【mock节点】
     当沙箱探测到数据饥荒时触发，利用大模型逆向解算 WHERE 条件，生成专属测试数据。

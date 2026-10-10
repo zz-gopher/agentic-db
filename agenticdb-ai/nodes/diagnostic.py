@@ -2,14 +2,14 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import ValidationError
 
-from core.config import llm
-from graph.state import AgenticState
+from config.config import llm
+from graph.sql_state import SQLState
 from retrievers.vector_repo import vector_store
 from schemas.enums import AntiPatternTag
 from schemas.models import DiagnosticResult
 
 
-def diagnostic_node(state: AgenticState) -> dict:
+def diagnostic_node(state: SQLState) -> dict:
     bad_sql = state["bad_sql"]
     schema = state.get("table_schema", "")
 

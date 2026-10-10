@@ -1,110 +1,109 @@
 import os
-import json
-import subprocess
-import shutil
+import re
+from lxml import etree
 
 
-def _get_java_command():
-    """
-    环境探针：智能寻找系统中的 Java 命令
-    """
-    # 1. 优先读取系统环境变量中的 JAVA_HOME
-    java_home = os.environ.get("JAVA_HOME")
-    if java_home:
-        java_cmd = os.path.join(java_home, "bin", "java")
-        if os.path.exists(java_cmd) or os.path.exists(java_cmd + ".exe"):
-            return java_cmd
+def _clean_and_mock_sql(sql_str: str) -> str:
+    clean_sql = re.sub(r'[#$]\{[^}]+\}', '?', sql_str)
+    clean_sql = re.sub(r'\s+', ' ', clean_sql).strip()
 
-    # 2. 回退到全局 path 中寻找
-    if shutil.which("java"):
-        return "java"
-
-    raise EnvironmentError(
-        "❌ 致命错误：系统中未找到 Java 环境。\n"
-        "解决方案：请安装 JDK (推荐 11 及以上) 并配置环境变量，或者在运行前设置 JAVA_HOME。"
-    )
+    clean_sql = re.sub(r'(?i)WHERE\s+AND\s+', 'WHERE ', clean_sql)
+    clean_sql = re.sub(r'(?i)WHERE\s+OR\s+', 'WHERE ', clean_sql)
+    clean_sql = re.sub(r'(?i),\s+WHERE\s+', ' WHERE ', clean_sql)
+    clean_sql = re.sub(r'(?i)SELECT\s+FROM', 'SELECT * FROM', clean_sql)
+    return clean_sql
 
 
-def _ensure_parser_jar(project_root: str, jar_path: str):
-    """
-    自愈机制：如果找不到 jar 包，尝试自动调用 Maven 构建
-    """
-    if os.path.exists(jar_path):
-        return
+def _flatten_mybatis_node(node, sql_fragments: dict) -> str:
+    text_parts = []
+    if node.text:
+        text_parts.append(node.text)
 
-    print("⚠️ 未检测到已编译的 Java 解析器 (jar包)。")
+    for child in node:
+        tag_name = child.tag.lower() if child.tag else ""
 
-    if not shutil.which("mvn"):
-        raise EnvironmentError(
-            "❌ 致命错误：缺失 jar 包且系统中未找到 Maven (mvn)，无法自动构建。\n"
-            "解决方案：请进入 agenticdb-parser 目录手动执行编译，或安装 Maven。"
-        )
+        if tag_name == "include":
+            refid = child.get("refid")
+            clean_refid = refid.split('.')[-1] if refid else ""
+            if clean_refid and clean_refid in sql_fragments:
+                text_parts.append(_flatten_mybatis_node(sql_fragments[clean_refid], sql_fragments))
+            else:
+                text_parts.append(" /* MISSING_INCLUDE */ ")
 
-    print("⏳ 正在自动调用 Maven 构建底座，请稍候...")
-    parser_dir = os.path.join(project_root, "agenticdb-parser")
-    try:
-        subprocess.run(
-            ["mvn", "clean", "package", "-DskipTests"],
-            cwd=parser_dir,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        print("✅ Java 解析器自动构建成功！\n")
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"❌ 自动构建失败，请检查 Java 代码或 Maven 配置。错误信息:\n{e.stderr}")
+        elif tag_name == "where":
+            text_parts.append(" WHERE ")
+            text_parts.append(_flatten_mybatis_node(child, sql_fragments))
+        # 补全了 trim 标签的处理逻辑
+        elif tag_name == "trim":
+            prefix = child.get("prefix", "").upper() if child.get("prefix") else ""
+            if "WHERE" in prefix:
+                text_parts.append(" WHERE ")
+            text_parts.append(_flatten_mybatis_node(child, sql_fragments))
+        else:
+            text_parts.append(_flatten_mybatis_node(child, sql_fragments))
+
+        if child.tail:
+            text_parts.append(child.tail)
+
+    return " ".join(text_parts)
 
 
-def scan_project_mappers(target_dir: str):
-    """
-    遍历目录下的所有 XML 文件，并调用底层 Java 解析器提取纯净 SQL。
-    任何人拉取代码后，均可无痛运行。
-    """
+def scan_project_mappers(target_dir: str) -> list:
     extracted_sqls = []
+    parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
+    # 核心修改：将提取目标严格收缩为仅处理 select 标签
+    target_tags = ['select']
 
-    # 1. 绝对路径推导 (兼容所有操作系统的路径分隔符)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    ai_dir = os.path.dirname(current_dir)
-    project_root = os.path.dirname(ai_dir)
-
-    jar_path = os.path.join(project_root, "agenticdb-parser", "target", "agenticdb-parser-1.0-SNAPSHOT.jar")
-
-    # 2. 检查并准备运行环境
-    java_cmd = _get_java_command()
-    _ensure_parser_jar(project_root, jar_path)
-
-    for root, _, files in os.walk(target_dir):
+    for root_dir, _, files in os.walk(target_dir):
         for file in files:
-            if file.endswith(".xml"):
-                file_path = os.path.join(root, file)
+            if not file.endswith(".xml"):
+                continue
 
-                try:
-                    # 3. 使用推导出的跨平台命令和绝对路径执行
-                    result = subprocess.run(
-                        [java_cmd, "-jar", jar_path, file_path],
-                        capture_output=True,
-                        text=True,
-                        check=True
-                    )
+            file_path = os.path.join(root_dir, file)
+            try:
+                tree = etree.parse(file_path, parser)
+                root = tree.getroot()
 
-                    parsed_data = json.loads(result.stdout)
+                sql_fragments = {}
+                for sql_node in root.findall('sql'):
+                    node_id = sql_node.get('id')
+                    if node_id:
+                        sql_fragments[node_id] = sql_node
 
-                    for item in parsed_data:
-                        sql_type = "select" if item['sql'].strip().upper().startswith("SELECT") else "update"
-                        clean_sql = item['sql'].replace('\u003d', '=').replace('\u003e', '>').replace('\u003c', '<')
+                for tag in target_tags:
+                    for node in root.findall(tag):
+                        node_id = node.get('id')
+                        if not node_id:
+                            continue
+
+                        raw_xml_parts = [node.text or ""]
+                        for child in node:
+                            raw_xml_parts.append(etree.tostring(child, encoding='unicode'))
+                        raw_xml_with_tags = "".join(raw_xml_parts).strip()
+
+                        flat_sql = _flatten_mybatis_node(node, sql_fragments)
+                        original_sql = _clean_and_mock_sql(flat_sql)
+                        original_sql = original_sql.replace('\u003d', '=').replace('\u003e', '>').replace('\u003c',
+                                                                                                              '<')
 
                         extracted_sqls.append({
                             "file_path": file_path,
-                            "id": item["id"],
-                            "original_sql": clean_sql,
-                            "type": sql_type
+                            "id": node_id,
+                            "type": tag,
+                            "raw_xml_fragment": raw_xml_with_tags,
+                            "original_sql": original_sql
                         })
 
-                except subprocess.CalledProcessError as e:
-                    print(f"❌ 解析失败 [{file}]: 底层抛出异常或语法不规范。")
-                except json.JSONDecodeError:
-                    print(f"❌ 解析失败 [{file}]: Java 引擎返回了非法的 JSON 格式。")
-                except KeyError as e:
-                    print(f"❌ 解析失败 [{file}]: Java 引擎返回的 JSON 缺少必要字段 {e}。")
+            except etree.XMLSyntaxError:
+                print(f"⚠️ 解析跳过 [{file}]: 不是规范的 XML 文件。")
+            except Exception as e:
+                print(f"❌ 解析失败 [{file}]: {str(e)}")
 
     return extracted_sqls
+
+if __name__ == "__main__":
+    # 快速测试你的本地解析效果
+    res = scan_project_mappers("../examples")
+    for item in res:
+        print(f"[{item['id']}] 纯净压测 SQL -> {item['original_sql']}")
+        print(f"[{item['id']}] 原始带标签 XML -> {item['raw_xml_fragment']}\n")

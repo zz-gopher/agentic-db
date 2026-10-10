@@ -1,12 +1,12 @@
 import hashlib
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from core.config import llm
-from graph.state import AgenticState
+from config.config import llm
+from graph.sql_state import SQLState
 from retrievers.vector_repo import vector_store
 from schemas.models import ExperienceTagging
 
-def memory_node(state: AgenticState) -> dict:
+def memory_node(state: SQLState) -> dict:
     bad_sql = state.get("bad_sql", "")
     draft = state.get("final_draft")
     db_engine = state.get("db_engine", "mysql")

@@ -3,7 +3,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from schemas.models import SqlOptimizationDraft
 
-class AgenticState(TypedDict):
+class SQLState(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     bad_sql: str # 待优化SQL
     db_uri: str # 数据库连接地址

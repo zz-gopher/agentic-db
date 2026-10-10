@@ -4,13 +4,13 @@ load_dotenv()
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import ValidationError
-from core.config import llm, settings
+from config.config import llm, settings
 from schemas.models import EvaluationResult
-from graph.state import AgenticState
+from graph.sql_state import SQLState
 from tools.sandbox_tools import get_explain_plan, verify_logic_equivalence
 
 
-def evaluator_node(state: AgenticState) -> dict:
+def evaluator_node(state: SQLState) -> dict:
     bad_sql = state.get("bad_sql", "")
     db_uri = state.get("db_uri")
     draft = state.get("final_draft")

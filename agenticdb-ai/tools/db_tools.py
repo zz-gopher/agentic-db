@@ -1,4 +1,4 @@
-from core.config import settings
+from config.config import settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from tools.sandbox_tools import get_engine

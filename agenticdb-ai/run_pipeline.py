@@ -2,7 +2,7 @@ import os
 import concurrent.futures
 from langchain_core.messages import HumanMessage
 
-# 引入你的解析器和 Agent 图
+# 引入解析器和 Agent 图
 from tools.xml_scanner import scan_project_mappers
 from graph.workflow import agent_app
 
@@ -51,12 +51,12 @@ def run_devops_pipeline(target_dir: str, db_uri, max_workers: int = 5):
 
     # 1. 调用提取器 (目前只扫描 SELECT)
     extracted_sqls = scan_project_mappers(target_dir)
-
-    if not extracted_sqls:
+    sql_list = [item["original_sql"] for item in extracted_sqls]
+    if not sql_list:
         print("✅ 未发现待迁移的 XML SQL。")
         return []
 
-    print(f"\n⚙️ 启动并发引擎 (线程数: {max_workers})，将 {len(extracted_sqls)} 条 SQL 送入 Agentic-DB...")
+    print(f"\n⚙️ 启动并发引擎 (线程数: {max_workers})，将 {len(sql_list)} 条 SQL 送入 Agentic-DB...")
 
     audit_results = []
 

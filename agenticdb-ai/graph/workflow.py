@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, START, END
-from graph.state import AgenticState
+from graph.sql_state import SQLState
 
 # 1. 导入所有拆分出去的节点
 from nodes.schema_prepare import prepare_schema_node
@@ -10,7 +10,7 @@ from nodes.memory import memory_node
 from nodes.mockdata import mockdata_node
 
 # 2. 初始化图状态
-workflow = StateGraph(AgenticState)
+workflow = StateGraph(SQLState)
 
 # 3. 注册所有节点
 workflow.add_node("prepare_schema", prepare_schema_node)
@@ -20,13 +20,13 @@ workflow.add_node("evaluator", evaluator_node)
 workflow.add_node("memory_node", memory_node)
 workflow.add_node("mockdata_node", mockdata_node)
 def check_valid_and_route(next_node: str):
-    def router(state: AgenticState) -> str:
+    def router(state: SQLState) -> str:
         if state.get("is_valid", True) == False:
             return END
         return next_node
     return router
 
-def route_after_evaluation(state: AgenticState) -> str:
+def route_after_evaluation(state: SQLState) -> str:
     if state.get("is_valid", True) == False:
         return END
     if state.get("needs_mock", False) and not state.get("mock_inserts"):

@@ -3,10 +3,10 @@ from sqlglot import exp
 from langchain_core.messages import AIMessage
 
 from tools.db_tools import get_table_schema
-from graph.state import AgenticState
+from graph.sql_state import SQLState
 
 
-def prepare_schema_node(state: AgenticState) -> dict:
+def prepare_schema_node(state: SQLState) -> dict:
     bad_sql = state["bad_sql"]
     db_uri = state["db_uri"]
     clean_sql = bad_sql.strip(" \n\r\t;")
