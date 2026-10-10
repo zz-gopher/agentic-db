@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # === 虚拟环境 (绝对不能上传) ===
-.venv/
+agenticdb-ai/.venv/
 venv/
 env/
 

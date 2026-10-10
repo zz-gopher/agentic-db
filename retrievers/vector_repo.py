@@ -7,5 +7,5 @@ embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-zh-v1.5")
 vector_store = Chroma(
     collection_name="sql_experience",
     embedding_function=embeddings,
-    persist_directory="./agenticdb-ai/bge_db"
+    persist_directory="./bge_db"
 )
