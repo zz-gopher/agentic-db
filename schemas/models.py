@@ -36,3 +36,11 @@ class MockDataResult(BaseModel):
         description="基于原 SQL 条件逆向推导出的 INSERT INTO 语句列表。绝对不允许超过5条。",
         max_length=5
     )
+class XmlStitchingResult(BaseModel):
+    diff_analysis: str = Field(
+        description="对比【原版纯SQL】与【优化后纯SQL】，逐点列出具体的优化改动（如：1. 子查询改JOIN；2. '1024'去掉单引号；3. DATE()改区间查询），并说明如何将这些改动挂载回原XML标签树上。"
+    )
+    reconstructed_xml: str = Field(
+        description="最终缝合后的完整 MyBatis XML 内部代码（严禁包含外层的 <select> 根标签和 markdown 标记）。"
+    )
+

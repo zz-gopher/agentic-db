@@ -67,6 +67,9 @@ def generate_markdown_report(audit_results: list, output_path: str = None):
             md_lines.append("```sql\n" + str(s.get('original_sql')).strip() + "\n```")
             md_lines.append("**[Agentic-DB 优化版]**:")
             md_lines.append("```sql\n" + str(s.get('optimized_sql')).strip() + "\n```")
+            if s.get('final_xml_fragment'):
+                md_lines.append("**[重构缝合后的 MyBatis XML]**:")
+                md_lines.append("```xml\n" + str(s.get('final_xml_fragment')).strip() + "\n```")
             feedback = s.get('feedback', '经过沙箱与大模型联合评估，原 SQL 逻辑已达标或优化方案已验证通过。')
             # 替换换行符以确保在 Markdown 引用块中渲染正常
             clean_feedback = str(feedback).replace('\n', '\n> ')

@@ -3,7 +3,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 
-# --- 1. Mapper 专属状态 (外层子图) ---
+# --- Mapper 专属状态---
 class MapperAuditState(TypedDict):
     """专门处理 MyBatis XML 标签拆解与缝合的状态机"""
     messages: Annotated[List[AnyMessage], add_messages]
@@ -24,4 +24,5 @@ class MapperAuditState(TypedDict):
     is_valid: bool
     error_msg: Optional[str]
 
-
+    review_score: Optional[int]
+    db_uri: str
