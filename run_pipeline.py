@@ -1,5 +1,4 @@
 import os
-import re
 import concurrent.futures
 from lxml import etree
 from langchain_core.messages import HumanMessage

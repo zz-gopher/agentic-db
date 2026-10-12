@@ -4,22 +4,27 @@ import shutil
 import zipfile
 import tempfile
 import subprocess
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field
-from typing import List, Optional
-from graph.workflow import agent_app as agentic_graph
-from run_pipeline import run_devops_pipeline
+
+# 引入底层纯 SQL 沙箱与外层 Mapper 缝合网关
+from graph.workflow import agent_app as sql_agent_graph
+
+# 引入流水线与文件落盘工具
+from run_pipeline import run_devops_pipeline, save_fixed_mappers
 from tools.report_generator import generate_markdown_report
 
-app = FastAPI(title="Agentic-DB SQL Optimizer API", version="1.0.0")
+app = FastAPI(title="Agentic-DB SQL & Mapper Optimizer API", version="2.0.0")
 
 
-# 1. 定义请求与响应数据模型
+# ==========================================
+# 1. 数据模型定义 (Pydantic Models)
+# ==========================================
 class SQLAuditRequest(BaseModel):
-    sql: str = Field(..., description="需要审计的原始 SQL")
+    sql: str = Field(..., description="需要审计的原始纯 SQL")
     db_uri: str = Field(..., description="沙箱数据库连接串")
-    db_engine: str = Field(default="mysql", description="数据库方言")
 
 
 class SQLAuditResponse(BaseModel):
@@ -30,23 +35,72 @@ class SQLAuditResponse(BaseModel):
     block_reason: Optional[str] = None
 
 
-@app.post("/api/v1/audit", response_model=SQLAuditResponse)
+class GitProjectAuditRequest(BaseModel):
+    """Git 仓库审计专用请求体 (纯 JSON 交互，清爽规范)"""
+    git_url: str = Field(..., description="Git 仓库地址 (如 https://github.com/xxx/xxx.git)")
+    git_branch: str = Field(default="main", description="Git 分支名")
+    db_uri: str = Field(..., description="沙箱数据库连接串 (如 mysql+pymysql://root:root@127.0.0.1:3306/ai_note)")
+    max_workers: int = Field(default=3, description="并发执行的线程数")
+
+
+# ==========================================
+# 2. 内部公共执行引擎 (DRY 原则：复用于 Git 与 ZIP 接口)
+# ==========================================
+def _execute_project_pipeline_and_package(target_scan_dir: str, temp_dir: str, db_uri: str,
+                                          max_workers: int) -> Response:
+    """
+    核心公共函数：执行扫描 -> 沙箱压测与 XML 缝合 -> 生成报告与修复版 XML -> 打包返回
+    """
+    print(f"🚀 启动沙箱打分与 XML 缝合流水线，目标库: {db_uri}")
+    audit_results = run_devops_pipeline(target_scan_dir, db_uri, max_workers)
+
+    if not audit_results:
+        raise HTTPException(status_code=404, detail="未在项目中扫描到任何可处理的 MyBatis XML <select> 节点")
+
+    # 1. 创建交付物归档目录
+    artifact_dir = os.path.join(temp_dir, "Agentic_Audit_Artifacts")
+    os.makedirs(artifact_dir, exist_ok=True)
+
+    # 2. 生成 Markdown 审计报告 (直接写入归档目录)
+    report_path = os.path.join(artifact_dir, "Agentic_SQL_Audit_Report.md")
+    generate_markdown_report(audit_results, output_path=report_path)
+
+    # 3. 生成修复后的 Mapper XML 文件 (写入归档目录下的 fixed_mappers 文件夹)
+    fixed_mappers_dir = os.path.join(artifact_dir, "fixed_mappers")
+    save_fixed_mappers(audit_results, output_dir=fixed_mappers_dir)
+
+    # 4. 将【审计报告 + 修复后的 XML 文件夹】一键打包成 ZIP 交付物返回给客户端
+    output_zip_base = os.path.join(temp_dir, "Agentic_DB_Deliverables")
+    final_zip_path = shutil.make_archive(output_zip_base, 'zip', artifact_dir)
+
+    with open(final_zip_path, "rb") as f:
+        zip_bytes = f.read()
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="Agentic_DB_Audit_Deliverables.zip"'
+        }
+    )
+
+
+# ==========================================
+# 3. API 路由端点
+# ==========================================
+@app.post("/api/v1/audit", response_model=SQLAuditResponse, summary="单条纯 SQL 沙箱审计")
 async def audit_single_sql(request: SQLAuditRequest):
-    """同步等待审查结果的端点"""
+    """同步等待单条纯 SQL 审查结果的端点"""
     try:
         initial_state = {
             "bad_sql": request.sql,
-            "db_engine": request.db_engine,
             "db_uri": request.db_uri,
             "retry_count": 0,
             "messages": []
         }
 
-        # 异步调用状态机
-        final_state = await agentic_graph.ainvoke(initial_state)
-
+        final_state = await sql_agent_graph.ainvoke(initial_state)
         draft_obj = final_state.get("final_draft")
-        # 如果对象存在，用点号(.)获取 optimized_sql，否则返回 None
         extracted_sql = draft_obj.optimized_sql if draft_obj else None
 
         return SQLAuditResponse(
@@ -60,81 +114,74 @@ async def audit_single_sql(request: SQLAuditRequest):
         raise HTTPException(status_code=500, detail=f"审计流水线异常: {str(e)}")
 
 
-@app.post("/api/v1/audit-project")
-def audit_project_cloud(
-        # 核心沙箱参数
-        db_uri: str = Form(...,
-                           description="沙箱数据库连接串 (例如: mysql+pymysql://root:root@127.0.0.1:3306/ai_note)"),
-
-        # 源码获取方式 (Git 或 ZIP，二选一)
-        git_url: Optional[str] = Form(None, description="Git 仓库地址 (如 https://github.com/xxx.git)"),
-        git_branch: Optional[str] = Form("main", description="Git 分支名"),
-        file: Optional[UploadFile] = File(None, description="Spring项目的 .zip 压缩包"),
-        max_workers: int = Form(3, description="并发执行的线程数")
-):
+@app.post("/api/v1/audit-project/git", summary="项目级审计 (通过 Git 仓库拉取)")
+def audit_project_by_git(request: GitProjectAuditRequest):
     """
-    云端项目级扫描与审计闭环：
-    获取源码 (Git/ZIP) -> 扫描提取 SQL -> 送入沙箱 Agent -> 直接返回结果与 Markdown 报告文本
+    通过传入 Git 仓库地址拉取源码 -> 自动拆解并优化 Mapper XML -> 返回包含【审计报告 + 修复后 XML】的 ZIP 包
     """
-    if not git_url and not file:
-        raise HTTPException(status_code=400, detail="必须提供 git_url 或上传 .zip 文件")
-
-    # 使用临时目录，请求结束自动销毁物理文件，防止磁盘溢出
     with tempfile.TemporaryDirectory() as temp_dir:
         target_scan_dir = os.path.join(temp_dir, "source_code")
 
         try:
-            # 1. 源码落地机制
-            if git_url:
-                print(f"📦 正在从 {git_url} (分支: {git_branch}) 拉取代码...")
-                subprocess.run(
-                    ["git", "clone", "-b", git_branch, "--single-branch", git_url, target_scan_dir],
-                    check=True, capture_output=True, text=True
-                )
-            elif file:
-                if not file.filename.endswith('.zip'):
-                    raise HTTPException(status_code=400, detail="必须上传 .zip 压缩包")
-                zip_path = os.path.join(temp_dir, file.filename)
-                with open(zip_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(target_scan_dir)
-
-            # 2. 触发核心并发流水线，传入目标目录与沙箱连接串
-            print(f"🚀 启动沙箱打分流水线，目标库: {db_uri}")
-            audit_results = run_devops_pipeline(target_scan_dir, db_uri, max_workers)
-
-            if not audit_results:
-                return {
-                    "status": "success",
-                    "total_scanned": 0,
-                    "message": "未在项目中扫描到任何 MyBatis XML 语句"
-                }
-
-            report_path = generate_markdown_report(audit_results)
-
-            report_content = ""
-            if report_path and os.path.exists(report_path):
-                with open(report_path, "r", encoding="utf-8") as f:
-                    report_content = f.read()
-
-            if not report_content:
-                return {"message": "报告生成失败"}
-
-            return Response(
-                content=report_content,
-                media_type="text/markdown",
-                headers={
-                    "Content-Disposition": f'attachment; filename="Agentic_SQL_Audit_Report.md"'
-                }
+            print(f"📦 [Git 模式] 正在从 {request.git_url} (分支: {request.git_branch}) 拉取代码...")
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "-b", request.git_branch, "--single-branch", request.git_url,
+                 target_scan_dir],
+                check=True, capture_output=True, text=True
+            )
+            return _execute_project_pipeline_and_package(
+                target_scan_dir=target_scan_dir,
+                temp_dir=temp_dir,
+                db_uri=request.db_uri,
+                max_workers=request.max_workers
             )
 
         except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"Git 拉取失败: {e.stderr}")
-        except zipfile.BadZipFile:
-            raise HTTPException(status_code=400, detail="压缩包损坏，无法解压")
+            raise HTTPException(status_code=400, detail=f"Git 仓库拉取失败，请检查地址或分支名: {e.stderr}")
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"流水线执行异常: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Git 审计流水线执行异常: {str(e)}")
+
+
+@app.post("/api/v1/audit-project/zip", summary="项目级审计 (通过上传 ZIP 压缩包)")
+def audit_project_by_zip(
+        db_uri: str = Form(..., description="沙箱数据库连接串 (如 mysql+pymysql://root:root@127.0.0.1:3306/ai_note)"),
+        file: UploadFile = File(..., description="包含 MyBatis Mapper 的项目 .zip 压缩包"),
+        max_workers: int = Form(3, description="并发执行的线程数")
+):
+    """
+    通过上传项目 .zip 压缩包 -> 自动拆解并优化 Mapper XML -> 返回包含【审计报告 + 修复后 XML】的 ZIP 包
+    """
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="文件格式错误：必须上传 .zip 格式的压缩包")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        target_scan_dir = os.path.join(temp_dir, "source_code")
+        zip_path = os.path.join(temp_dir, file.filename)
+
+        try:
+            print(f"📦 [ZIP 模式] 正在接收并解压上传文件: {file.filename}...")
+            with open(zip_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(target_scan_dir)
+
+            return _execute_project_pipeline_and_package(
+                target_scan_dir=target_scan_dir,
+                temp_dir=temp_dir,
+                db_uri=db_uri,
+                max_workers=max_workers
+            )
+
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="上传的 ZIP 压缩包已损坏，无法解压")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"ZIP 审计流水线执行异常: {str(e)}")
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
