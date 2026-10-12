@@ -46,7 +46,7 @@ def _process_single_sql(item: dict, db_uri: str) -> dict:
         "error_msg": error_msg,
         "block_node": "mapper_stitcher" if not is_valid else None,
         "block_reason": error_msg,
-        "feedback": "完成 XML 缝合重构" if is_valid else error_msg
+        "feedback": final_state.get("feedback") if is_valid else error_msg
     }
 
 

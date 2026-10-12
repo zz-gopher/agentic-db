@@ -19,10 +19,9 @@ class MapperAuditState(TypedDict):
     # 【与 SQL 子图交互的桥梁】
     extracted_raw_sql: Optional[str]  # 从 XML 中剥离出来的“脏 SQL” (准备喂给 SQL 子图)
     optimized_plain_sql: Optional[str]  # SQL 子图优化完后返回的“纯净好 SQL” (准备缝合回 XML)
-
+    feedback: Optional[str]
     # 【状态标记】
     is_valid: bool
     error_msg: Optional[str]
-
     review_score: Optional[int]
     db_uri: str
