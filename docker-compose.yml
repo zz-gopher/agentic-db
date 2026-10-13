@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  agentic-db-engine:
+    build: .
+    container_name: agentic-db-engine
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env  # 自动读取与 docker-compose.yml 同级目录下的 .env 文件
+    volumes:
+      # 挂载宿主机目录，确保产物和日志持久化
+      - ./logs:/app/logs
+      - ./Agentic_Audit_Artifacts:/app/Agentic_Audit_Artifacts
+    restart: always

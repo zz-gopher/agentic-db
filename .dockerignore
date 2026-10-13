@@ -1,0 +1,10 @@
+.git
+.idea
+__pycache__
+*.pyc
+venv/
+env/
+.env
+fixed_mappers/
+reports/
+Agentic_Audit_Artifacts/
