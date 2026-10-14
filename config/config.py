@@ -8,8 +8,9 @@ import httpx
 
 #  定义统一配置中心
 class Settings(BaseSettings):
-    deepseek_api_key: str = Field(...)
-    deepseek_base_url: str = Field(default="https://api.deepseek.com/v1")
+    # 对应 .env / .env.example 中的 OPENAI_API_KEY
+    openai_api_key: str = Field(...)
+    base_url: str = Field(default="https://api.deepseek.com/v1")
     llm_model: str = Field(default="deepseek-chat")
     llm_temperature: float = Field(default=0.0)
 
@@ -28,8 +29,8 @@ settings = Settings()
 direct_client = httpx.Client(trust_env=False)
 
 llm = ChatOpenAI(
-    api_key=settings.deepseek_api_key,
-    base_url=settings.deepseek_base_url,
+    api_key=settings.openai_api_key,
+    base_url=settings.base_url,
     model=settings.llm_model,
     http_client=direct_client,
     temperature=settings.llm_temperature

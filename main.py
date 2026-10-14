@@ -164,7 +164,6 @@ def audit_project_by_zip(
             print(f"📦 [ZIP 模式] 正在接收并解压上传文件: {file.filename}...")
             with open(zip_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(target_scan_dir)
 

@@ -1,32 +1,41 @@
-attr==0.3.2
-ConfigParser==7.2.0
-cryptography==50.0.2
-docutils==0.23
-fastapi==0.143.0
-filelock==4.1.1
-HTMLParser==0.0.2
-httpx==0.28.1
-ipython==8.12.3
-ipywidgets==8.1.9
-jnius==1.1.0
-keyring==25.7.0
-langchain_chroma==1.1.0
-langchain_core==1.6.10
-langchain_huggingface==1.2.3
-langchain_openai==1.7.1
-langgraph==1.2.15
-lxml==6.1.3
-protobuf==7.36.2
-pydantic==2.14.1
-pydantic_settings==2.15.0
-pyOpenSSL==26.4.0
-python-dotenv==1.2.4
-redis==8.1.0
-Sphinx==9.1.0
-SQLAlchemy==2.1.4
-sqlglot==30.19.0
-thread==2.0.6
-typing_extensions==4.16.0
-urllib3_secure_extra==0.1.0
-uvicorn==0.54.0
-xmlrpclib==1.0.1
+# ==========================================
+# Agentic-DB 依赖清单
+# 按职责分组，pip install -r requirements.txt
+# ==========================================
+
+# --- Web 服务 / API ---
+fastapi
+uvicorn
+# 必需：main.py 中 UploadFile / File / Form 解析 multipart 表单依赖
+python-multipart
+
+# --- 大模型与 Agent 编排 ---
+langgraph
+langchain-core
+langchain-openai
+
+# --- 配置 / 数据校验 ---
+pydantic
+pydantic-settings
+python-dotenv
+
+# --- HTTP 客户端，config.py 中自定义 httpx.Client(trust_env=False) ---
+httpx
+
+# --- 数据库 & SQL 解析 ---
+sqlalchemy
+# 沙箱连接串 mysql+pymysql:// 的驱动
+pymysql
+# MySQL 8 默认 caching_sha2_password 认证需要
+cryptography
+sqlglot
+
+# --- MyBatis XML 解析 ---
+lxml
+
+# --- 向量检索 / RAG 经验库，retrievers/vector_repo.py ---
+chromadb
+langchain-chroma
+langchain-huggingface
+# HuggingFaceEmbeddings(BAAI/bge-small-zh-v1.5) 底层依赖，会带入 torch，体积较大
+sentence-transformers
