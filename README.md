@@ -36,96 +36,106 @@ flowchart TB
     classDef agent fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px;
     classDef state fill:#ffe0b2,stroke:#ef6c00,stroke-width:2px,stroke-dasharray: 3 3;
 
-    %% 外部输入输出与配置
-    Config["全局配置 (.env)\nAPI_KEY / BASE_URL / 模型参数"]:::external
-    Input["用户请求 (API Payload)\n待优化项目 (Git/ZIP/SQL) + 动态 DB_URI"]:::external
-    Output["输出制品：自动化迁移审计报告\n(含优化代码、诊断建议与沙箱打分)"]:::external
-
-    %% 接入层
-    subgraph API_Layer ["接入层 (FastAPI)"]
-        Gateway["任务接收与并发分发网关"]
+    %% 1. 顶部接入层
+    subgraph Top_Layer [" "]
+        direction LR
+        Config["全局配置 (.env)<br>API_KEY / BASE_URL"]:::external
+        Input["用户请求 (API Payload)<br>待优化项目 (Git/ZIP/SQL) + 动态 DB_URI"]:::external
+        Gateway["接入层 (FastAPI)<br>任务接收与并发分发网关"]:::core
+        
+        Config -.->|"加载引擎配置"| Gateway
+        Input -->|"提交任务 (携带 DB_URI)"| Gateway
     end
+    style Top_Layer fill:none,stroke:none
 
     %% ================= 核心图编排 =================
     subgraph Agentic_Engine ["多智能体嵌套图编排 (LangGraph Nested Workflows)"]
+        direction TB
         
         %% 【外层：Mapper Workflow】
         subgraph Mapper_Workflow ["【外层中枢】Mapper Workflow (处理 XML / 代码)"]
+            direction LR
             Mapper_State(("MapperAuditState")):::state
-            Dispatcher_Node["并发调度节点 (Async Map)"]
-            Gather_Node["结果汇聚节点 (Async Reduce)"]
-            Stitcher_Node["mapper_stitcher (XML 格式化与缝合 Agent)"]:::agent
+            Dispatcher_Node["并发调度节点<br>(Async Map)"]
+            Gather_Node["结果汇聚节点<br>(Async Reduce)"]
+            Stitcher_Node["mapper_stitcher<br>(XML 格式化与缝合 Agent)"]:::agent
             
             Mapper_State -->|"解析出 N 条脏 SQL"| Dispatcher_Node
-            Gather_Node -->|"底层审核通过 (汇总 N 份草案)"| Stitcher_Node
+            Gather_Node -->|"底层审核通过<br>(汇总 N 份草案)"| Stitcher_Node
             Gather_Node -->|"全部熔断/拒绝"| END_Mapper((END))
         end
 
-        %% 【内层：SQL Workflow】(加上层叠阴影效果暗示并发多实例)
+        %% 【内层：SQL Workflow】
         subgraph SQL_Workflow ["【内层沙箱】SQL Workflow (并发执行的多实例压测部门)"]
+            direction LR
             SQL_State(("SQLState")):::state
-            Schema_Node["prepare_schema (DB 探活 & 校验目标表真实存在)"]
-            Diag_Node["diagnostic_node (病理诊断)"]
-            Gen_Node["generator (SQL 优化推理 Agent)"]:::agent
-            Eval_Node["evaluator (双轨验证与评估)"]
-            Mock_Node["mockdata_node (Phantom Seeder 幽灵播种)"]:::agent
-            Memory_Node["memory_node (记忆固化)"]
+            Schema_Node["prepare_schema<br>(DB探活 & 表校验)"]
+            Diag_Node["diagnostic_node<br>(病理诊断与记忆唤醒)"]
+            Gen_Node["generator<br>(推导并生成 SQL 草案)"]:::agent
+            Eval_Node["evaluator<br>(基于 EXPLAIN 打分与双轨验证)"]
             
-            %% 内层主干连线
+            subgraph Fallback_Mechanisms ["自我进化与兜底机制"]
+                direction TB
+                Mock_Node["mockdata_node<br>(Phantom Seeder)"]:::agent
+                Memory_Node["memory_node<br>(提炼法则与记忆固化)"]
+            end
+            
             SQL_State --> Schema_Node
-            Schema_Node -->|"连通正常且表存在"| Diag_Node
-            Schema_Node -->|"表不存在 / DB 无法连通"| END_SQL((END))
-            Diag_Node -->|"生成初步诊断建议"| Gen_Node
-            Gen_Node -->|"OK"| Eval_Node
+            Schema_Node -->|"正常且表存在"| Diag_Node
+            Schema_Node -->|"表缺失/断连"| END_SQL((END))
+            Diag_Node -->|"携带诊断与历史经验"| Gen_Node
+            Gen_Node -->|"输出 final_draft"| Eval_Node
             
-            %% 评估后的路由逻辑
             Eval_Node -->|"数据饥荒 (needs_mock)"| Mock_Node
-            Mock_Node -->|"逆向推导条件 -> 注入数据"| Eval_Node
+            Mock_Node -->|"逆向推导 -> 注入数据"| Eval_Node
             
-            Eval_Node -->|"分数 < 70 (打回重写)"| Gen_Node
-            Eval_Node -->|"分数 >= 70"| Memory_Node
-            Eval_Node -->|"评估熔断"| END_SQL
-            Memory_Node --> END_SQL
+            Eval_Node -->|"分数 < 70 (携带 feedback 打回)"| Gen_Node
+            Eval_Node -->|"分数 >= 70 (审核通过)"| Memory_Node
+            Eval_Node -->|"评估熔断 (物理执行失败等)"| END_SQL
         end
         
-        %% 建立内外层嵌套并发关系 (Map-Reduce)
+        %% 并发嵌套关系
         Dispatcher_Node ==>|"并发批量注入内层 (Map)"| SQL_Workflow
-        SQL_Workflow ==>|"异步返回 N 个 final_draft"| Gather_Node
+        SQL_Workflow ==>|"异步返回 N 个打分草案"| Gather_Node
+    end
+
+    Gateway -->|"触发外层 Workflow"| Mapper_Workflow
+
+    %% ================= 底部依赖层 =================
+    subgraph Bottom_Layer ["外部基础设施与执行环境"]
+        direction LR
         
+        subgraph Infrastructure ["基础设施与模型层"]
+            direction LR
+            LLM_API(("LLM (OpenAI/DeepSeek)")):::model
+            ChromaDB[("ChromaDB<br>(向量记忆与前置知识)")]:::model
+        end
+        
+        subgraph Sandbox_Layer ["插件化执行沙盒层 (Pluggable Sandbox)"]
+            direction LR
+            MySQL[("MySQL 物理沙盒")]:::sandbox
+            OtherDB[("扩展 DB 接口<br>(PostgreSQL/Oracle...)")]:::sandbox
+            MySQL -.->|"实现标准化接口"| OtherDB
+        end
     end
 
-    %% 工具与模型层
-    subgraph Infrastructure ["基础设施与模型层"]
-        LLM_API(("LLM (OpenAI/DeepSeek)")):::model
-        ChromaDB[("ChromaDB (向量记忆与前置知识)")]:::model
-    end
+    Agentic_Engine -.->|"组件依赖调用"| Bottom_Layer
 
-    %% 沙盒层
-    subgraph Sandbox_Layer ["插件化执行沙盒层 (Pluggable Sandbox)"]
-        MySQL[("MySQL 物理沙盒")]:::sandbox
-        OtherDB[("扩展 DB 接口 (PostgreSQL/Oracle...)")]:::sandbox
-        MySQL -.->|"实现标准化接口"| OtherDB
-    end
-
-    %% 全局连接线与业务流向
-    Config -.->|"加载 LLM 引擎全局配置"| LLM_API
-    
-    Input -->|"提交任务 (携带 DB_URI)"| Gateway
-    Gateway -->|"触发外层 Workflow\n(下发代码与 DB_URI)"| Mapper_Workflow
-    
-    %% 工具调用连接
-    Schema_Node <-->|"并行获取物理表结构 (Schema)"| Sandbox_Layer
-    Diag_Node <-->|"并发病理诊断"| LLM_API
-    Gen_Node <-->|"并发 Prompt 推理"| LLM_API
-    Stitcher_Node <-->|"对齐标签"| LLM_API
-    Mock_Node <-->|"并发逆向解算 WHERE 条件"| LLM_API
-    Memory_Node <-->|"固化/检索"| ChromaDB
-    
-    %% 沙盒执行连接
-    Eval_Node <-->|"并发双轨执行 (Shadow Execution)"| Sandbox_Layer
-    Mock_Node <-->|"并发 DML 注入与回滚 (事务隔离)"| Sandbox_Layer
-    
+    Output["输出制品：自动化迁移审计报告<br>(含优化代码、诊断建议与沙箱打分)"]:::external
     Stitcher_Node -->|"汇聚数据，生成 XML 与审计报告"| Output
+
+    %% 细节调用连线 (凸显记忆闭环)
+    Schema_Node -.->|"获取表结构"| Sandbox_Layer
+    Gen_Node -.->|"Prompt 交互生成草案"| LLM_API
+    Stitcher_Node -.->|"对齐标签"| LLM_API
+    Mock_Node -.->|"DML 注入与回滚"| Sandbox_Layer
+    Eval_Node -.->|"提取 EXPLAIN 并验证逻辑"| Sandbox_Layer
+    Eval_Node -.->|"基于 EXPLAIN 请求模型打分"| LLM_API
+    
+    %% 记忆飞轮核心连线
+    Diag_Node -.->|"提取反模式标签<br>请求模型诊断"| LLM_API
+    Diag_Node -.->|"基于标签唤醒<br>相似历史优化案例"| ChromaDB
+    Memory_Node -.->|"提炼泛化法则<br>并 Upsert 注入库"| ChromaDB
 
     %% 应用样式
     class API_Layer,Agentic_Engine core;
