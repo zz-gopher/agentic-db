@@ -12,81 +12,109 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/zz-gopher/agentic-db/pulls)
 
-**一个带“物理沙箱”和“记忆库”的生产级多智能体 SQL 优化系统**
-
-[English](README_EN.md) | 简体中文
+**一个带“物理沙箱”和“记忆库”的多智能体 SQL 优化系统**
 
 </div>
 
+## 架构图
 
-## 🎯 核心理念
-市面上的 AI 写 SQL 工具往往是在“盲写”——大模型看一眼表结构，靠猜给出一个优化方案。但在真实的生产环境中，这种做法非常危险。AI 很容易擅自改变原有的业务逻辑（比如把 `LEFT JOIN` 改成 `INNER JOIN`），或者捏造出不存在的字段。
+Agentic-DB 采用 **Neuro-Symbolic Agentic Engine**（神经符号智能体引擎）架构，将大模型（LLM）的非确定性推理与 LangGraph 的确定性状态机、AST 解析以及 MySQL 物理沙盒深度结合，旨在保障企业级代码迁移与 SQL 重构的 100% 准确性。
 
-Agentic-DB 提供了一种更安全的落地思路。它不仅让 AI 重写 SQL，还给 AI 穿上了一层约束衣：**物理沙箱测试**、**严格的客观审查**和**历史经验库**。任何一段优化后的代码，都必须在真实数据库里跑通，证明“查询结果没变”且“执行计划确实更优”，才会最终交付。
+```mermaid
+flowchart TB
+    %% 定义样式
+    classDef external fill:#f9f9f9,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef core fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef model fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef sandbox fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef agent fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px;
+    classDef state fill:#ffe0b2,stroke:#ef6c00,stroke-width:2px,stroke-dasharray: 3 3;
 
-围绕这一核心思路，我们将 AI 的创造力与传统 DBA 的严苛工程规范结合起来：
+    %% 外部输入输出
+    Input["输入源：Java项目 (Git/ZIP) 或 纯SQL文本"]:::external
+    Output["输出制品：自动化迁移审计报告 (含优化代码、诊断建议与沙箱打分)"]:::external
 
-- **绝对不破坏业务逻辑**：性能可以优化，规范可以提升，但查询结果绝对不能变。系统会通过比对优化前后的真实输出，一票否决任何企图篡改业务逻辑的草案。
-- **用事实打分，拒绝幻觉**：AI 不能凭空吹嘘自己的 SQL 有多快。系统会直连数据库抓取真实的 `EXPLAIN` 执行计划，基于客观指标（是否全表扫描、是否走索引）来评估。
-- **越用越聪明的“错题本”**：引入向量数据库（ChromaDB）。每次成功优化一条 SQL，系统就会把它存起来。下次遇到类似的“烂 SQL”，AI 会直接参考历史成功案例去写代码。
+    %% 接入层
+    subgraph API_Layer ["接入层 (FastAPI)"]
+        Gateway["任务接收与分发网关"]
+    end
 
----
-## ✨ 主要功能
+    %% ================= 核心图编排 =================
+    subgraph Agentic_Engine ["多智能体嵌套图编排 (LangGraph Nested Workflows)"]
+        
+        %% 【外层：Mapper Workflow】
+        subgraph Mapper_Workflow ["【外层中枢】Mapper Workflow (处理 XML)"]
+            Mapper_State(("MapperAuditState")):::state
+            Call_SQL_Node["call_sql_optimizer (调用底层沙箱)"]
+            Stitcher_Node["mapper_stitcher (XML 格式化与缝合 Agent)"]:::agent
+            
+            Mapper_State --> Call_SQL_Node
+            Call_SQL_Node -->|"底层审核通过 (Score >= 70)"| Stitcher_Node
+            Call_SQL_Node -->|"底层熔断/拒绝"| END_Mapper((END))
+        end
 
-- **智能诊断**：识别烂 SQL 的核心病灶（如隐式转换、函数包裹索引列、深分页、无条件笛卡尔积等），并打上病理标签。
-- **代码与物理结构分离**：要求 AI 将“SQL 代码改写”与“建索引建议（DDL）”分开输出，保证查询语句的纯粹，并提供清晰的建索引工单。
-- **物理沙箱拦截**：
-  - 自动前往真实数据库获取最新的表结构。
-  - 强制比对优化前后的数据逻辑，防止乱改条件。
-  - 抓取底层的 EXPLAIN 执行计划用于最终评分。
-- **RAG 经验检索**：在优化前，去经验库里搜索长得最像的历史烂 SQL 和标准解法，直接喂给 AI 当参考，大幅提高一次性写对的概率。
-- **自动重试与熔断**：当 AI 写出的代码没通过沙箱测试时，系统会带着真实的报错信息把它打回重写。超过 3 次则触发熔断，防止死循环。
-- **极简配置**：基于 `pydantic-settings`，统一通过 `.env` 管理 API Key 和数据库连接，带类型强校验，开箱即用。
+        %% 【内层：SQL Workflow】
+        subgraph SQL_Workflow ["【内层沙箱】SQL Workflow (纯净 SQL 压测部门)"]
+            SQL_State(("SQLState")):::state
+            Schema_Node["prepare_schema (准备表结构)"]
+            Diag_Node["diagnostic_node (病理诊断)"]
+            Gen_Node["generator (SQL 优化推理 Agent)"]:::agent
+            Eval_Node["evaluator (双轨验证与评估)"]
+            Mock_Node["mockdata_node (Phantom Seeder 幽灵播种)"]:::agent
+            Memory_Node["memory_node (记忆固化)"]
+            
+            %% 内层主干连线
+            SQL_State --> Schema_Node
+            Schema_Node -->|"OK"| Diag_Node
+            Diag_Node -->|"生成初步诊断建议"| Gen_Node
+            Gen_Node -->|"OK"| Eval_Node
+            
+            %% 评估后的路由逻辑
+            Eval_Node -->|"数据饥荒 (needs_mock)"| Mock_Node
+            Mock_Node -->|"逆向推导条件 -> 注入数据"| Eval_Node
+            
+            Eval_Node -->|"分数 < 70 (打回重写)"| Gen_Node
+            Eval_Node -->|"分数 >= 70"| Memory_Node
+            Eval_Node -->|"熔断/失效"| END_SQL((END))
+            Memory_Node --> END_SQL
+        end
+        
+        %% 建立内外层嵌套关系
+        Call_SQL_Node -->|"剥离脏 SQL 注入内层"| SQL_Workflow
+        SQL_Workflow -->|"返回 final_draft (含诊断建议与打分)"| Call_SQL_Node
+        
+    end
 
-<img width="1307" height="831" alt="QQ_1790755649857" src="https://github.com/user-attachments/assets/2c09d760-09c5-4f64-af39-22fd3750d3ba" />
+    %% 工具与模型层
+    subgraph Infrastructure ["基础设施与模型层"]
+        LLM_API(("LLM (OpenAI/DeepSeek)")):::model
+        ChromaDB[("ChromaDB (向量记忆与前置知识)")]:::model
+    end
 
----
+    %% 沙盒层
+    subgraph Sandbox_Layer ["插件化执行沙盒层 (Pluggable Sandbox)"]
+        MySQL[("MySQL 物理沙盒")]:::sandbox
+        OtherDB[("扩展 DB 接口 (PostgreSQL/Oracle...)")]:::sandbox
+        MySQL -.->|"实现标准化接口"| OtherDB
+    end
 
+    %% 全局连接线与业务流向
+    Input -->|"提交任务"| Gateway
+    Gateway -->|"触发外层 Workflow"| Mapper_Workflow
+    
+    %% 工具调用连接
+    Diag_Node <-->|"病理诊断/建议提取"| LLM_API
+    Gen_Node <-->|"Prompt 交互"| LLM_API
+    Stitcher_Node <-->|"对齐标签"| LLM_API
+    Mock_Node <-->|"逆向解算 WHERE 条件"| LLM_API
+    Memory_Node <-->|"固化/检索"| ChromaDB
+    
+    %% 沙盒连接
+    Eval_Node <-->|"双轨执行 (Shadow Execution)"| Sandbox_Layer
+    Mock_Node <-->|"DML 注入与回滚 (事务隔离)"| Sandbox_Layer
+    
+    Stitcher_Node -->|"汇聚数据，生成 XML 与审计报告"| Output
 
-## 🏗️ 工作流说明
-
-项目底层基于 LangGraph，将整个 SQL 调优过程拆解为一个多智能体协作的工作流：
-
-1. **🔍 诊断节点 (Diagnostic)**：拿到用户的烂 SQL，结合真实的表结构，指出病因，并从“错题本”里翻出两道最相似的历史案例。
-2. **💻 生成节点 (Generator)**：拿着诊断报告和参考案例，开始改写 SQL，并评估是否需要给出 `ALTER TABLE` 建议。
-3. **🧪 沙箱测试 (Sandbox)**：完全客观的物理探针。把新写的 SQL 扔进数据库跑逻辑比对和 `EXPLAIN`。报错或逻辑不符直接打回。
-4. **👨‍⚖️ 审查节点 (Evaluator)**：拿着沙箱反馈的 EXPLAIN 报告进行把关。如果发现严重语法不规范（如老式的逗号连接），或依然是全表扫描且没给索引建议，直接给 0 分打回。及格（>70分）才允许放行。
-5. **🧠 记忆节点 (Memory)**：代码通过所有测试并及格后，为原 SQL 生成 MD5 指纹，将优化过程存入 ChromaDB，成为后续优化的参考范例。
-
----
-
-## 🚀 快速开始
-
-**1. 克隆项目并安装依赖**
-```bash
-git clone https://github.com/zz-gopher/agentic-db.git
-cd agentic-db/agenticdb-ai
-pip install -r requirements.txt
+    %% 应用样式
+    class API_Layer,Agentic_Engine core;
 ```
-
-**2. 配置环境变量**
-
-在 agenticdb-ai 目录下创建 .env 文件，填入你的配置：
-```bash
-DEEPSEEK_API_KEY=your_api_key_here
-DB_URI=mysql+pymysql://user:password@localhost:3306/your_db
-HF_ENDPOINT=https://hf-mirror.com
-```
-
-**2. 运行程序**
-
-```bash
-python main.py
-```
----
-## 🗺️ 后续规划 (V2.0 展望)
-1.**自治索引助手 (Index Agent)**：独立处理建索引建议，在沙箱中推演索引成本，并自动合并表内冗余的索引。
-
-2.**造数防御 (Mock Data Seeding)**：解决表数据为空时导致逻辑比对失效的问题。通过智能生成少量测试数据骗过数据库优化器，获取更真实的执行成本。
-
-3.**可视化工作台 (Tuning Workspace)**：告别纯命令行，提供带有执行图谱、代码 Diff 对比与沙箱监控面板的前端交互界面。
