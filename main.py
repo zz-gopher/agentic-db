@@ -1,4 +1,6 @@
 import os
+import re
+
 import uvicorn
 import shutil
 import zipfile
@@ -18,6 +20,23 @@ from tools.report_generator import generate_markdown_report
 
 app = FastAPI(title="Agentic-DB SQL & Mapper Optimizer API", version="2.0.0")
 
+
+def normalize_db_uri(db_uri: str) -> str:
+    """
+    智能转换数据库连接串：
+    如果后端运行在 Docker 容器中，自动将用户习惯输入的 127.0.0.1 / localhost
+    静默重写为宿主机穿透地址 host.docker.internal，实现用户端零感知。
+    """
+    # 判断当前代码是否运行在 Docker 容器内（通过检测根目录下的 .dockerenv 文件）
+    in_docker = os.path.exists('/.dockerenv') or os.environ.get('IN_DOCKER') == 'true'
+
+    if in_docker:
+        # 使用正则精准替换 @ 后面的 localhost 或 127.0.0.1
+        new_uri = re.sub(r'@(localhost|127\.0\.0\.1)(:|/)', r'@host.docker.internal\2', db_uri)
+        if new_uri != db_uri:
+            print(f"🔄 [网络穿透] 检测到容器环境，已自动将本地回环地址映射为宿主机地址: {new_uri}")
+            return new_uri
+    return db_uri
 
 # ==========================================
 # 1. 数据模型定义 (Pydantic Models)
@@ -51,6 +70,7 @@ def _execute_project_pipeline_and_package(target_scan_dir: str, temp_dir: str, d
     """
     核心公共函数：执行扫描 -> 沙箱压测与 XML 缝合 -> 生成报告与修复版 XML -> 打包返回
     """
+    db_uri = normalize_db_uri(db_uri)
     print(f"🚀 启动沙箱打分与 XML 缝合流水线，目标库: {db_uri}")
     audit_results = run_devops_pipeline(target_scan_dir, db_uri, max_workers)
 
@@ -91,10 +111,11 @@ def _execute_project_pipeline_and_package(target_scan_dir: str, temp_dir: str, d
 @app.post("/api/v1/audit", response_model=SQLAuditResponse, summary="单条纯 SQL 沙箱审计")
 async def audit_single_sql(request: SQLAuditRequest):
     """同步等待单条纯 SQL 审查结果的端点"""
+    target_db_uri = normalize_db_uri(request.db_uri)
     try:
         initial_state = {
             "bad_sql": request.sql,
-            "db_uri": request.db_uri,
+            "db_uri": target_db_uri,
             "retry_count": 0,
             "messages": []
         }
