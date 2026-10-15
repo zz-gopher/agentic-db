@@ -140,3 +140,130 @@ flowchart TB
     %% 应用样式
     class API_Layer,Agentic_Engine core;
 ```
+
+## ⚡ 快速启动（Docker 一键部署）
+
+### 1. 环境准备
+
+| 组件 | 版本要求 | 说明 |
+| --- | --- | --- |
+| Docker | 20.10+ | 需支持 BuildKit |
+| Docker Compose | v2.0+ | `docker compose version` 可查看 |
+| MySQL（物理沙盒） | 5.7 / 8.0 | 可部署在宿主机或远程，**不需要**放进容器 |
+
+### 2. 配置 `.env` 文件
+
+`docker-compose.yml` 通过 `env_file` 挂载根目录的 `.env`，缺失会导致启动失败。请复制模板并填入真实秘钥：
+
+```powershell
+# Windows (PowerShell)
+Copy-Item .env.example .env
+```
+
+```bash
+# Linux / macOS
+cp .env.example .env
+```
+
+填写关键项（其余保持默认即可）：
+
+```ini
+OPENAI_API_KEY=你的真实秘钥
+BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+HF_ENDPOINT=https://hf-mirror.com
+```
+
+### 3. 启动服务
+
+```bash
+# 前台启动（首次建议，便于观察日志）
+docker compose up --build
+
+# 后台常驻启动
+docker compose up -d --build
+```
+
+- 首次构建会拉取 **CPU 版 PyTorch** 与业务依赖（走清华源），并预装 `git` 用于项目级审计，耗时较长，请耐心等待。
+- 启动完成后访问 `http://localhost:8000/docs` 打开 Swagger 交互文档。
+
+### 4. 关于物理沙盒（`DB_URI`）的连接
+
+容器内不存在 MySQL，`docker-compose.yml` 默认通过 `host.docker.internal` 穿透访问宿主机数据库：
+
+```yaml
+DB_URI: mysql+pymysql://root:root@host.docker.internal:3306/ai_note
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+> **零感知重写**：`main.py` 中的 `normalize_db_uri()` 会检测容器环境（`/.dockerenv`），自动把调用方传入的 `127.0.0.1` / `localhost` 重写为 `host.docker.internal`。因此**调用接口时直接填本机地址即可**，无需手动改写。
+
+Linux 宿主机请确保 Docker 版本 ≥ 20.10（支持 `host-gateway`）；如仍无法连通，请确认 MySQL 监听地址不是 `127.0.0.1` 且已放行 `3306` 端口。
+
+### 5. 调用示例
+
+**① 单条 SQL 审计**
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/audit" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT * FROM users WHERE DATE(create_time) = CURDATE()",
+    "db_uri": "mysql+pymysql://root:root@127.0.0.1:3306/ai_note"
+  }'
+```
+
+**② 项目级审计（Git 仓库）**
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/audit-project/git" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "git_url": "https://github.com/your-org/your-repo.git",
+    "git_branch": "main",
+    "db_uri": "mysql+pymysql://root:root@127.0.0.1:3306/ai_note",
+    "max_workers": 3
+  }'
+```
+
+**③ 项目级审计（ZIP 上传）**
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/audit-project/zip" \
+  -F "file=@./your-project.zip" \
+  -F "db_uri=mysql+pymysql://root:root@127.0.0.1:3306/ai_note" \
+  -F "max_workers=3" \
+  --output Audit_Deliverables.zip
+```
+
+Git / ZIP 接口返回的是 ZIP 交付物，内含 `Agentic_SQL_Audit_Report.md`（审计报告）与 `fixed_mappers/`（修复后的 XML）。
+
+### 6. 数据持久化说明
+
+| 挂载项 | 容器内路径 | 用途 |
+| --- | --- | --- |
+| `./logs` | `/app/logs` | 运行日志 |
+| `./Agentic_Audit_Artifacts` | `/app/Agentic_Audit_Artifacts` | 审计产物 |
+| `./bge_db` | `/app/bge_db` | ChromaDB 向量经验库 |
+| `hf_cache`（命名卷） | `/root/.cache/huggingface` | BGE 模型缓存，避免重复下载 |
+
+### 7. 常用运维命令
+
+```bash
+docker compose logs -f agentic-db-engine   # 实时跟踪日志
+docker compose ps                          # 查看运行状态
+docker compose restart agentic-db-engine   # 重启服务（改了 .env 后）
+docker compose down                        # 停止并移除容器
+docker compose build --no-cache            # 强制重新构建镜像
+```
+
+### 8. 常见问题排查
+
+| 现象 | 原因与解决 |
+| --- | --- |
+| 启动时报 `env file not found` | 未创建 `.env`，执行 `cp .env.example .env` 后重试 |
+| 沙盒连接失败 / 表缺失 | 系统为**熔断保护**，非故障；检查 `DB_URI` 与物理表是否存在 |
+| 容器访问不到宿主机 MySQL | 确认 `extra_hosts` 生效、MySQL 已放行 3306 且未仅监听 `127.0.0.1` |
+| 首次调用卡在模型下载 | 容器内无预置 HF 权重，需联网经 `HF_ENDPOINT` 拉取 bge 模型，已缓存至 `hf_cache` 卷 |
+| 构建时下载 torch 极慢或失败 | `Dockerfile` 已锁定 PyTorch 官方 CPU 源；国内环境下可重试或检查网络代理 |
